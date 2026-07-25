@@ -90,26 +90,47 @@ print("Repository:", REPO_ROOT)"""
     code(
         """search_root = Path("/kaggle/input") if IS_KAGGLE else REPO_ROOT / "data"
 bundle_candidates = sorted(search_root.rglob(BUNDLE_NAME))
-if not bundle_candidates:
-    raise FileNotFoundError(
-        f"{BUNDLE_NAME} was not found below {search_root}. "
-        "Upload it as a Kaggle Dataset."
-    )
-BUNDLE_PATH = bundle_candidates[0]
-with zipfile.ZipFile(BUNDLE_PATH) as archive:
-    names = set(archive.namelist())
-    assert "BUNDLE_MANIFEST.json" in names
-    bundle_manifest = json.loads(archive.read("BUNDLE_MANIFEST.json"))
-    assert bundle_manifest["bundle_format"] == "cospec-ssb-v03-kaggle-v1"
-    assert bundle_manifest["official_test_data_included"] is False
+if bundle_candidates:
+    BUNDLE_PATH = bundle_candidates[0]
+    with zipfile.ZipFile(BUNDLE_PATH) as archive:
+        names = set(archive.namelist())
+        assert "BUNDLE_MANIFEST.json" in names
+        bundle_manifest = json.loads(archive.read("BUNDLE_MANIFEST.json"))
+        for name, expected in bundle_manifest["files"].items():
+            digest = hashlib.sha256()
+            with archive.open(name) as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            assert digest.hexdigest() == expected["sha256"], name
+        if IS_KAGGLE:
+            archive.extractall(REPO_ROOT)
+else:
+    expanded_manifests = sorted(search_root.rglob("BUNDLE_MANIFEST.json"))
+    if not expanded_manifests:
+        visible = sorted(
+            str(path.relative_to(search_root))
+            for path in search_root.rglob("*")
+            if path.is_file()
+        )[:50]
+        raise FileNotFoundError(
+            f"Neither {BUNDLE_NAME} nor an extracted BUNDLE_MANIFEST.json "
+            f"was found below {search_root}. Attach the Kaggle Dataset with "
+            f"Add Input. Visible files: {visible}"
+        )
+    BUNDLE_PATH = expanded_manifests[0]
+    bundle_root = BUNDLE_PATH.parent
+    bundle_manifest = json.loads(BUNDLE_PATH.read_text(encoding="utf-8"))
     for name, expected in bundle_manifest["files"].items():
-        digest = hashlib.sha256()
-        with archive.open(name) as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        assert digest.hexdigest() == expected["sha256"], name
-    if IS_KAGGLE:
-        archive.extractall(REPO_ROOT)
+        source = bundle_root / name
+        assert source.exists(), source
+        assert hashlib.sha256(source.read_bytes()).hexdigest() == expected["sha256"]
+        if IS_KAGGLE:
+            target = REPO_ROOT / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+
+assert bundle_manifest["bundle_format"] == "cospec-ssb-v03-kaggle-v1"
+assert bundle_manifest["official_test_data_included"] is False
 
 print("Bundle verified:", BUNDLE_PATH)
 print(json.dumps(bundle_manifest["split_roles"], indent=2))"""
