@@ -144,3 +144,30 @@ def test_prm_adapter_skips_steps_without_three_distinct_negative_texts():
         "is_initial_screening_question": False,
     }
     assert adapt_prm800k([record], 1, 13) == []
+
+
+def test_prm_adapter_neutralizes_source_answer_marker_in_rendered_views():
+    record = {
+        "question": {
+            "problem": "Compute 5 + 5.",
+            "ground_truth_answer": "10",
+        },
+        "label": {
+            "steps": [{
+                "completions": [
+                    {"text": "ANSWER: 10.", "rating": 1, "flagged": None},
+                    {"text": "Use 9.", "rating": -1, "flagged": None},
+                    {"text": "Use 11.", "rating": -1, "flagged": None},
+                    {"text": "Stop early.", "rating": 0, "flagged": None},
+                ],
+                "chosen_completion": 0,
+                "human_completion": None,
+            }]
+        },
+        "is_quality_control_question": False,
+        "is_initial_screening_question": False,
+    }
+    row = adapt_prm800k([record], 1, 21)[0]
+    _assert_valid_row(row, "candidate_verification")
+    assert "[source answer] 10." in row["view_a"]
+    assert row["metadata"]["option_values"][row["gold_answer"]] == "ANSWER: 10."

@@ -1,5 +1,5 @@
 experiment_name: V02_official_external
-adapter_version: v02o.3
+adapter_version: v02o.4
 seed: 20260725
 rows_per_family: 128
 official_eval_only: true

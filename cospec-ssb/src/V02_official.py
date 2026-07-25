@@ -12,7 +12,7 @@ from typing import Any, Iterable
 from src.V02_benchmark import LABELS
 
 
-ADAPTER_VERSION = "v02o.3"
+ADAPTER_VERSION = "v02o.4"
 OFFICIAL_FAMILIES = (
     "relational_csp",
     "logic_grid",
@@ -57,6 +57,13 @@ def _render_options(options: dict[str, str]) -> str:
     return "\n".join(f"- {label}: {value}" for label, value in options.items())
 
 
+def _neutralize_protocol_markers(text: str) -> str:
+    """Prevent source text from impersonating the benchmark answer delimiter."""
+    return re.sub(
+        r"\bANSWER\s*:", "[source answer]", str(text), flags=re.IGNORECASE
+    )
+
+
 def _row(
     *,
     family: str,
@@ -70,6 +77,8 @@ def _row(
     gold_value: str,
     source_metadata: dict[str, Any],
 ) -> dict[str, Any]:
+    view_a = _neutralize_protocol_markers(view_a)
+    view_b = _neutralize_protocol_markers(view_b)
     gold_answer = next(label for label, value in options.items() if value == gold_value)
     identity = {
         "adapter_version": ADAPTER_VERSION,
