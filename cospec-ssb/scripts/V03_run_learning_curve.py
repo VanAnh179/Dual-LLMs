@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -71,8 +72,49 @@ def _run(args: list[str], gpu: int) -> subprocess.Popen:
 
 
 def _wait_pair(left: subprocess.Popen, right: subprocess.Popen, label: str) -> None:
-    left_code = left.wait()
-    right_code = right.wait()
+    started = time.monotonic()
+    next_heartbeat = started + 30
+    processes = (("gpu0", left), ("gpu1", right))
+    try:
+        while True:
+            left_code = left.poll()
+            right_code = right.poll()
+            if left_code is not None and right_code is not None:
+                break
+            now = time.monotonic()
+            if now >= next_heartbeat:
+                states = {
+                    name: ("running" if process.poll() is None else process.returncode)
+                    for name, process in processes
+                }
+                print(
+                    f"[{label}] elapsed={int(now - started)}s workers={states}",
+                    flush=True,
+                )
+                next_heartbeat = now + 30
+            if (
+                left_code not in (None, 0)
+                or right_code not in (None, 0)
+            ):
+                for _, process in processes:
+                    if process.poll() is None:
+                        process.terminate()
+                left_code = left.wait()
+                right_code = right.wait()
+                break
+            time.sleep(2)
+    except KeyboardInterrupt:
+        print(f"Interrupting {label}; terminating GPU workers...", flush=True)
+        for _, process in processes:
+            if process.poll() is None:
+                process.terminate()
+        for _, process in processes:
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        raise
     if left_code or right_code:
         raise SystemExit(
             f"{label} failed: gpu0_exit={left_code}, gpu1_exit={right_code}"
