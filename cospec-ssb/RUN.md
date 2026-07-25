@@ -184,3 +184,41 @@ python scripts/evaluate_given_need_agents.py \
   --max-examples 100 \
   --sampling-mode first_n
 ```
+## V02 controlled training and official external evaluation
+
+Build and validate the controlled synthetic training benchmark:
+
+```bash
+python scripts/V02_generate_benchmark.py \
+  --config configs/v02_multifamily_benchmark.yaml
+python scripts/V02_validate_benchmark.py \
+  --config configs/v02_multifamily_benchmark.yaml
+```
+
+Build the evaluation-only official holdout and verify provenance:
+
+```bash
+python scripts/V02_build_official_external.py \
+  --config configs/v02_official_external.yaml
+python scripts/V02_validate_official_external.py \
+  --config configs/v02_official_external.yaml
+```
+
+Train all matched-budget controls and the latent split channel on GPU:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/V02_train_single_baselines.py \
+  --config configs/v02_split_vs_single.yaml
+CUDA_VISIBLE_DEVICES=0 python scripts/V02_train_split_latent.py \
+  --config configs/v02_split_vs_single.yaml
+```
+
+Run the controlled test followed by the untouched official external test:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/V02_evaluate_split_vs_single.py \
+  --config configs/v02_split_vs_single.yaml
+CUDA_VISIBLE_DEVICES=0 python scripts/V02_evaluate_split_vs_single.py \
+  --config configs/v02_split_vs_single.yaml \
+  --external-config configs/v02_official_external.yaml
+```

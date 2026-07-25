@@ -72,6 +72,10 @@ def _shuffled_sources(rows: list[dict], seed: int) -> list[int]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/v02_split_vs_single.yaml")
+    parser.add_argument(
+        "--external-config",
+        help="Evaluate trained V02 artifacts on a validated official holdout.",
+    )
     parser.add_argument("--max-examples", type=int)
     parser.add_argument("--batch-size", type=int)
     args = parser.parse_args()
@@ -86,7 +90,10 @@ def main() -> None:
         encode_prompt_batch, extract_option, paired_stratified_bootstrap,
         summarize_predictions,
     )
-    from src.V02_runtime import require_training_artifacts, require_v02_preflight
+    from src.V02_runtime import (
+        require_official_external_preflight, require_training_artifacts,
+        require_v02_preflight,
+    )
     from src.data_utils import (
         project_path, read_json, read_jsonl, write_json, write_jsonl,
     )
@@ -96,7 +103,19 @@ def main() -> None:
     cfg, _ = require_v02_preflight(args.config)
     require_training_artifacts(cfg, require_full=args.max_examples is None)
     eval_cfg = cfg["evaluation"]
-    test_path = project_path(cfg["data"]["test"])
+    external_cfg = None
+    external_manifest = None
+    if args.external_config:
+        external_cfg, external_manifest = require_official_external_preflight(
+            args.external_config
+        )
+        test_path = project_path(external_cfg["output_paths"]["test"])
+        metrics_path = external_cfg["output_paths"]["metrics"]
+        generation_path = external_cfg["output_paths"]["generation_dir"]
+    else:
+        test_path = project_path(cfg["data"]["test"])
+        metrics_path = cfg["outputs"]["metrics"]
+        generation_path = cfg["outputs"]["generation_dir"]
     rows = read_jsonl(test_path)
     if args.max_examples is not None:
         rows = rows[: args.max_examples]
@@ -109,13 +128,17 @@ def main() -> None:
         raise SystemExit(f"Unsupported evaluation dtype: {dtype_name}")
     dtype = dtype_map[dtype_name]
     batch_size = int(args.batch_size or eval_cfg["batch_size"])
-    max_length = int(cfg["training"]["max_seq_length"])
+    max_length = int(
+        (external_cfg or {}).get(
+            "max_seq_length", cfg["training"]["max_seq_length"]
+        )
+    )
     max_new_tokens = int(eval_cfg["max_new_tokens"])
     tokenizer = AutoTokenizer.from_pretrained(cfg["model_name"], trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
-    generation_dir = project_path(cfg["outputs"]["generation_dir"])
+    generation_dir = project_path(generation_path)
     generation_dir.mkdir(parents=True, exist_ok=True)
     all_predictions: dict[str, list[dict]] = {}
 
@@ -305,7 +328,12 @@ def main() -> None:
     else:
         primary_verdict = "INCONCLUSIVE"
     metrics = {
-        "experiment_name": cfg["experiment_name"],
+        "experiment_name": (
+            external_cfg["experiment_name"] if external_cfg else cfg["experiment_name"]
+        ),
+        "training_experiment_name": cfg["experiment_name"],
+        "evaluation_track": "official_external" if external_cfg else "controlled_synthetic",
+        "official_eval_only": bool(external_cfg),
         "model_name": cfg["model_name"],
         "num_examples": len(rows),
         "test_dataset_sha256": _sha256(test_path),
@@ -318,8 +346,10 @@ def main() -> None:
         "primary_verdict": primary_verdict,
         "report_status": "AWAITING_RESEARCH_REPORT",
     }
-    write_json(cfg["outputs"]["metrics"], metrics)
-    print(f"Saved metrics: {project_path(cfg['outputs']['metrics'])}")
+    if external_manifest is not None:
+        metrics["official_provenance_manifest"] = external_manifest
+    write_json(metrics_path, metrics)
+    print(f"Saved metrics: {project_path(metrics_path)}")
     print(f"primary_verdict={primary_verdict} delta={primary['delta']:+.4f} CI={[low, high]}")
 
 

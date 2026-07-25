@@ -57,6 +57,35 @@ def require_v02_preflight(config_path: str) -> tuple[dict[str, Any], dict[str, A
     return cfg, dataset_cfg
 
 
+def require_official_external_preflight(
+    config_path: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    cfg = load_config(config_path)
+    if not cfg.get("official_eval_only"):
+        raise SystemExit(
+            "Official external preflight blocked: config must be evaluation-only."
+        )
+    validation = read_json(cfg["output_paths"]["validation"], default={})
+    manifest = read_json(cfg["output_paths"]["manifest"], default={})
+    failures = []
+    if validation.get("status") != "PASS" or validation.get("smoke"):
+        failures.append("full official validation must exist with status PASS")
+    if not manifest.get("official_eval_only") or manifest.get("smoke"):
+        failures.append("official manifest is absent, non-eval, or marked smoke")
+    test_path = project_path(cfg["output_paths"]["test"])
+    if not test_path.exists():
+        failures.append(f"missing official test data: {test_path}")
+    else:
+        expected_hash = (manifest.get("test") or {}).get("sha256")
+        if not expected_hash or _sha256(test_path) != expected_hash:
+            failures.append("official test SHA256 differs from provenance manifest")
+    if failures:
+        raise SystemExit(
+            "Official external preflight blocked:\n- " + "\n- ".join(failures)
+        )
+    return cfg, manifest
+
+
 def require_training_artifacts(cfg: dict[str, Any], require_full: bool) -> dict[str, Any]:
     manifest = read_json(cfg["outputs"]["training_manifest"], default={})
     single = manifest.get("single_baselines", {})

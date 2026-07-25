@@ -5,7 +5,7 @@ import re
 from collections import Counter, defaultdict
 from typing import Any
 
-from src.V02_benchmark import FAMILIES, LABELS
+from src.V02_benchmark import LABELS
 
 
 ANSWER_SYSTEM = """Solve the supplied benchmark task using only the available private view or views.
@@ -149,7 +149,8 @@ def summarize_predictions(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "overall": summarize(rows),
         "by_family": {
-            family: summarize(family_groups[family]) for family in FAMILIES
+            family: summarize(group)
+            for family, group in sorted(family_groups.items())
         },
         "by_difficulty": {
             difficulty: summarize(group)

@@ -78,3 +78,32 @@ python scripts/evaluate_two_agent.py --config configs/d11_qwen05b.yaml --max-exa
 ```
 
 If dependencies are missing, scripts exit with a clear message pointing to `pip install -r requirements.txt`. CUDA is optional by default for smoke tests; set `require_cuda: true` in the config when you want scripts to fail early on non-CUDA machines.
+# CoSpec-SSB
+
+## V02 benchmark tracks
+
+V02 deliberately separates two kinds of evidence:
+
+- `V02_multifamily_split_benchmark` is a controlled synthetic benchmark. Its
+  counterfactual blocks guarantee balanced labels and identical partial-view
+  equivalence classes, so it tests whether the communication channel is causally
+  useful under controlled leakage and difficulty.
+- `V02_official_external` is an evaluation-only external-validity track. It adapts
+  held-out examples from CLUTRR, ZebraLogicBench, BIG-Bench Hard
+  `multistep_arithmetic_two`, and PRM800K. Official test examples are never added
+  to V02 training.
+
+The official adapter records the upstream repository, resolved dataset revision,
+download hash, license declaration, original source ID, and original split in a
+local provenance manifest. Generated data, model outputs, and reports are ignored
+by Git.
+
+The official sources are:
+
+- CLUTRR: <https://github.com/facebookresearch/clutrr>
+- ZebraLogicBench official leaderboard:
+  <https://huggingface.co/spaces/allenai/ZebraLogic>; its public
+  answer-bearing evaluation mirror is
+  <https://huggingface.co/datasets/WildEval/ZebraLogic>
+- BIG-Bench Hard: <https://github.com/suzgunmirac/BIG-Bench-Hard>
+- PRM800K: <https://github.com/openai/prm800k>

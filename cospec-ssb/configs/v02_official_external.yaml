@@ -1,0 +1,50 @@
+experiment_name: V02_official_external
+adapter_version: v02o.1
+seed: 20260725
+rows_per_family: 128
+official_eval_only: true
+max_seq_length: 1024
+
+sources:
+  clutrr:
+    family: relational_csp
+    dataset_id: CLUTRR/v1
+    dataset_config: gen_train234_test2to10
+    split: test
+    revision: main
+    canonical_repository: https://github.com/facebookresearch/clutrr
+    license: CC-BY-NC-4.0
+  zebralogic:
+    family: logic_grid
+    dataset_id: WildEval/ZebraLogic
+    dataset_config: grid_mode
+    split: test
+    revision: main
+    canonical_repository: https://huggingface.co/spaces/allenai/ZebraLogic
+    public_evaluation_mirror: https://huggingface.co/datasets/WildEval/ZebraLogic
+    redaction_note: The linked AllenAI public grid_mode masks solution cells; the official leaderboard also links this answer-bearing public mirror.
+    license: not_declared_in_dataset_card
+  bbh_arithmetic:
+    family: arithmetic_constraint
+    url: https://raw.githubusercontent.com/suzgunmirac/BIG-Bench-Hard/main/bbh/multistep_arithmetic_two.json
+    canonical_repository: https://github.com/suzgunmirac/BIG-Bench-Hard
+    upstream_repository: https://github.com/google/BIG-bench
+    split: test
+    license: MIT
+    upstream_license: Apache-2.0
+  prm800k:
+    family: candidate_verification
+    dataset_id: tasksource/PRM800K
+    filename: phase2_test.jsonl
+    split: phase2_test
+    revision: main
+    expected_sha256: 6b172efa884ac8341a946dd82e06947c135b7254109fb3f7aa907c715d98aaad
+    canonical_repository: https://github.com/openai/prm800k
+    license: MIT
+
+output_paths:
+  test: data/v02_official/V02_official_external_test.jsonl
+  validation: outputs/V02_official_external/metrics/dataset_validation.json
+  manifest: outputs/V02_official_external/metrics/dataset_manifest.json
+  metrics: outputs/V02_official_external/metrics/eval_metrics.json
+  generation_dir: outputs/V02_official_external/generations
