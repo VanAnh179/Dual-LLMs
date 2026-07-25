@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import hashlib
 import json
 import os
 import subprocess
@@ -187,6 +188,47 @@ def _curve_record(size: int, cfg: dict, metrics: dict) -> dict:
     }
 
 
+def _training_complete(
+    cfg: dict, size: int, expected_sample_hash: str, include_partials: bool
+) -> bool:
+    manifest = read_json(cfg["outputs"]["training_manifest"], default={})
+    single = manifest.get("single_baselines", {})
+    required_single = ("full", "view_a", "view_b") if include_partials else ("full",)
+    records = [single.get(mode) for mode in required_single]
+    records.append(manifest.get("split_latent"))
+    if any(not record for record in records):
+        return False
+    if any(int(record.get("num_train_examples", -1)) != size for record in records):
+        return False
+    if any(record.get("sample_ids_sha256") != expected_sample_hash for record in records):
+        return False
+    if any(not record.get("all_losses_finite") for record in records):
+        return False
+    if len({int(record.get("optimizer_steps", -1)) for record in records}) != 1:
+        return False
+    artifact_paths = [single[mode]["adapter_path"] for mode in required_single]
+    artifact_paths.extend((
+        manifest["split_latent"]["receiver_adapter_path"],
+        manifest["split_latent"]["bridge_path"],
+    ))
+    return all(project_path(path).exists() for path in artifact_paths)
+
+
+def _metrics_complete(
+    cfg: dict, test_split: str, modes: tuple[str, ...], expected_examples: int
+) -> bool:
+    metrics_path = Path(cfg["outputs"]["metrics"])
+    if test_split != "test":
+        metrics_path = metrics_path.with_name(
+            f"{metrics_path.stem}_{test_split}{metrics_path.suffix}"
+        )
+    metrics = read_json(metrics_path, default={})
+    return (
+        int(metrics.get("num_examples", -1)) >= expected_examples
+        and set(modes).issubset(set(metrics.get("selected_modes", ())))
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/v03_learning_curve.yaml")
@@ -201,6 +243,11 @@ def main() -> None:
         "--smoke",
         action="store_true",
         help="Run two tiny points and skip final controls.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Reuse validated completed points and continue incomplete work.",
     )
     args = parser.parse_args()
 
@@ -237,12 +284,15 @@ def main() -> None:
     )
     previous_ids: set[str] = set()
     curve_root = project_path(cfg["outputs"]["root"])
+    if args.smoke:
+        curve_root = curve_root.with_name(f"{curve_root.name}_smoke")
     records = []
     final_eval_config: Path | None = None
 
     for size in sizes:
         point_root = curve_root / f"n{size:05d}"
         selected_ids = [str(row["sample_id"]) for row in shuffled[:size]]
+        selected_hash = hashlib.sha256("\n".join(selected_ids).encode()).hexdigest()
         selected_set = set(selected_ids)
         if not previous_ids.issubset(selected_set):
             raise RuntimeError("Learning-curve subsets are not nested.")
@@ -263,38 +313,45 @@ def main() -> None:
         _write_yaml(split_cfg_path, split_cfg)
         _write_yaml(eval_cfg_path, eval_cfg)
 
-        single_process = _run(
-            [
-                sys.executable,
-                "scripts/V02_train_single_baselines.py",
-                "--config",
-                _relative(single_cfg_path),
-                "--modes",
-                "full",
-                "--max-examples",
-                str(size),
-            ],
-            gpu=0,
+        training_ready = args.resume and _training_complete(
+            eval_cfg, size, selected_hash, include_partials=False
         )
-        split_process = _run(
-            [
-                sys.executable,
-                "scripts/V02_train_split_latent.py",
-                "--config",
-                _relative(split_cfg_path),
-                "--max-examples",
-                str(size),
-            ],
-            gpu=1,
-        )
-        _wait_pair(single_process, split_process, f"training n={size}")
-        merged = _merge_manifests(
-            [
-                project_path(single_cfg["outputs"]["training_manifest"]),
-                project_path(split_cfg["outputs"]["training_manifest"]),
-            ],
-            project_path(eval_cfg["outputs"]["training_manifest"]),
-        )
+        if training_ready:
+            print(f"Resume: training n={size} already complete", flush=True)
+            merged = read_json(eval_cfg["outputs"]["training_manifest"])
+        else:
+            single_process = _run(
+                [
+                    sys.executable,
+                    "scripts/V02_train_single_baselines.py",
+                    "--config",
+                    _relative(single_cfg_path),
+                    "--modes",
+                    "full",
+                    "--max-examples",
+                    str(size),
+                ],
+                gpu=0,
+            )
+            split_process = _run(
+                [
+                    sys.executable,
+                    "scripts/V02_train_split_latent.py",
+                    "--config",
+                    _relative(split_cfg_path),
+                    "--max-examples",
+                    str(size),
+                ],
+                gpu=1,
+            )
+            _wait_pair(single_process, split_process, f"training n={size}")
+            merged = _merge_manifests(
+                [
+                    project_path(single_cfg["outputs"]["training_manifest"]),
+                    project_path(split_cfg["outputs"]["training_manifest"]),
+                ],
+                project_path(eval_cfg["outputs"]["training_manifest"]),
+            )
         full_record = merged["single_baselines"]["full"]
         split_record = merged["split_latent"]
         if full_record["sample_ids_sha256"] != split_record["sample_ids_sha256"]:
@@ -307,12 +364,13 @@ def main() -> None:
             raise RuntimeError(f"Non-finite loss at n={size}")
 
         max_eval = intermediate_eval
-        _evaluate(
-            eval_cfg_path,
-            ("single_full", "split_matched"),
-            "test",
-            max_eval,
-        )
+        curve_modes = ("single_full", "split_matched")
+        if args.resume and _metrics_complete(
+            eval_cfg, "test", curve_modes, max_eval
+        ):
+            print(f"Resume: OOD evaluation n={size} already complete", flush=True)
+        else:
+            _evaluate(eval_cfg_path, curve_modes, "test", max_eval)
         metrics = read_json(eval_cfg["outputs"]["metrics"])
         records.append(_curve_record(size, eval_cfg, metrics))
         final_eval_config = eval_cfg_path
@@ -320,6 +378,10 @@ def main() -> None:
     if not args.smoke and final_eval_config is not None:
         final_cfg = load_config(_relative(final_eval_config))
         final_root = project_path(final_cfg["outputs"]["root"])
+        final_selected_ids = [str(row["sample_id"]) for row in shuffled[:sizes[-1]]]
+        final_selected_hash = hashlib.sha256(
+            "\n".join(final_selected_ids).encode()
+        ).hexdigest()
         partial_a_cfg = _point_config(
             cfg, final_root, sizes[-1], "partial_a_training_manifest.json"
         )
@@ -330,44 +392,64 @@ def main() -> None:
         partial_b_path = final_root / "configs/partial_b.yaml"
         _write_yaml(partial_a_path, partial_a_cfg)
         _write_yaml(partial_b_path, partial_b_cfg)
-        partial_a = _run(
-            [
-                sys.executable,
-                "scripts/V02_train_single_baselines.py",
-                "--config",
-                _relative(partial_a_path),
-                "--modes",
-                "view_a",
-                "--max-examples",
-                str(sizes[-1]),
-            ],
-            gpu=0,
+        partials_ready = args.resume and _training_complete(
+            final_cfg, sizes[-1], final_selected_hash, include_partials=True
         )
-        partial_b = _run(
-            [
-                sys.executable,
-                "scripts/V02_train_single_baselines.py",
-                "--config",
-                _relative(partial_b_path),
-                "--modes",
-                "view_b",
-                "--max-examples",
-                str(sizes[-1]),
-            ],
-            gpu=1,
-        )
-        _wait_pair(partial_a, partial_b, "final partial-view controls")
-        _merge_manifests(
-            [
-                project_path(final_root / "metrics/single_training_manifest.json"),
-                project_path(final_root / "metrics/split_training_manifest.json"),
-                project_path(partial_a_cfg["outputs"]["training_manifest"]),
-                project_path(partial_b_cfg["outputs"]["training_manifest"]),
-            ],
-            project_path(final_cfg["outputs"]["training_manifest"]),
-        )
-        _evaluate(final_eval_config, ALL_EVAL_MODES, "test", None)
-        _evaluate(final_eval_config, ALL_EVAL_MODES, "iid_test", None)
+        if partials_ready:
+            print("Resume: final partial-view controls already complete", flush=True)
+        else:
+            partial_a = _run(
+                [
+                    sys.executable,
+                    "scripts/V02_train_single_baselines.py",
+                    "--config",
+                    _relative(partial_a_path),
+                    "--modes",
+                    "view_a",
+                    "--max-examples",
+                    str(sizes[-1]),
+                ],
+                gpu=0,
+            )
+            partial_b = _run(
+                [
+                    sys.executable,
+                    "scripts/V02_train_single_baselines.py",
+                    "--config",
+                    _relative(partial_b_path),
+                    "--modes",
+                    "view_b",
+                    "--max-examples",
+                    str(sizes[-1]),
+                ],
+                gpu=1,
+            )
+            _wait_pair(partial_a, partial_b, "final partial-view controls")
+            _merge_manifests(
+                [
+                    project_path(final_root / "metrics/single_training_manifest.json"),
+                    project_path(final_root / "metrics/split_training_manifest.json"),
+                    project_path(partial_a_cfg["outputs"]["training_manifest"]),
+                    project_path(partial_b_cfg["outputs"]["training_manifest"]),
+                ],
+                project_path(final_cfg["outputs"]["training_manifest"]),
+            )
+        final_test_count = len(read_jsonl(final_cfg["data"]["test"]))
+        final_iid_count = len(read_jsonl(final_cfg["data"]["iid_test"]))
+        if not (
+            args.resume
+            and _metrics_complete(
+                final_cfg, "test", ALL_EVAL_MODES, final_test_count
+            )
+        ):
+            _evaluate(final_eval_config, ALL_EVAL_MODES, "test", None)
+        if not (
+            args.resume
+            and _metrics_complete(
+                final_cfg, "iid_test", ALL_EVAL_MODES, final_iid_count
+            )
+        ):
+            _evaluate(final_eval_config, ALL_EVAL_MODES, "iid_test", None)
 
     summary = {
         "experiment_name": cfg["experiment_name"],

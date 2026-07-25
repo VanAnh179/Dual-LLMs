@@ -209,7 +209,7 @@ else:
     ),
     code(
         """if RUN_GPU:
-    smoke_root = REPO_ROOT / "outputs/V03_learning_curve"
+    smoke_root = REPO_ROOT / "outputs/V03_learning_curve_smoke"
     if smoke_root.exists():
         shutil.rmtree(smoke_root)
     run_cmd(
@@ -228,12 +228,9 @@ else:
     ),
     code(
         """if RUN_GPU:
-    curve_root = REPO_ROOT / "outputs/V03_learning_curve"
-    if curve_root.exists():
-        shutil.rmtree(curve_root)
     run_cmd(
         [sys.executable, "scripts/V03_run_learning_curve.py",
-         "--config", "configs/v03_learning_curve.yaml"],
+         "--config", "configs/v03_learning_curve.yaml", "--resume"],
         cwd=REPO_ROOT,
     )
     print("Full nested learning curve and IID/OOD controls: COMPLETE")
