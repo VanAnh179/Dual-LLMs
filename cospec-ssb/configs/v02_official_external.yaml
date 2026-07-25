@@ -1,5 +1,5 @@
 experiment_name: V02_official_external
-adapter_version: v02o.1
+adapter_version: v02o.2
 seed: 20260725
 rows_per_family: 128
 official_eval_only: true
@@ -12,7 +12,10 @@ sources:
     dataset_config: gen_train234_test2to10
     split: test
     revision: main
+    data_url: https://raw.githubusercontent.com/kliang5/CLUTRR_huggingface_dataset/main/gen_train234_test2to10/test.csv
+    expected_sha256: e139a9ebeece6901f0aa076dd6dd86ee9ff4a750473e3d477362b7f81da359cf
     canonical_repository: https://github.com/facebookresearch/clutrr
+    public_data_mirror: https://github.com/kliang5/CLUTRR_huggingface_dataset
     license: CC-BY-NC-4.0
   zebralogic:
     family: logic_grid

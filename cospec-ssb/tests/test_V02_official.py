@@ -41,6 +41,18 @@ def test_clutrr_adapter_splits_facts_and_balances_option_positions():
         _assert_valid_row(row, "relational_csp")
 
 
+def test_clutrr_adapter_parses_csv_string_query():
+    record = {
+        "id": "csv-clutrr",
+        "clean_story": "[Ava] is [Bea]'s mother. [Bea] is [Cy]'s sister.",
+        "query": "('Ava', 'Cy')",
+        "target_text": "granddaughter",
+        "task_name": "task_1.2",
+    }
+    row = adapt_clutrr([record], 1, 17)[0]
+    assert "What is Cy's family relation to Ava?" in row["full_problem"]
+
+
 def test_zebralogic_adapter_uses_solution_cell_without_rendering_solution_table():
     record = {
         "id": "lgp-test-fixture",

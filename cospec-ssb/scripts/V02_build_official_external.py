@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
+import io
 import json
 import sys
 import urllib.request
@@ -32,6 +34,14 @@ def _download_json(url: str) -> tuple[dict[str, Any], str]:
     with urllib.request.urlopen(request, timeout=120) as response:
         payload = response.read()
     return json.loads(payload), hashlib.sha256(payload).hexdigest()
+
+
+def _download_csv(url: str) -> tuple[list[dict[str, str]], str]:
+    request = urllib.request.Request(url, headers={"User-Agent": "cospec-ssb-v02"})
+    with urllib.request.urlopen(request, timeout=120) as response:
+        payload = response.read()
+    text = payload.decode("utf-8-sig")
+    return list(csv.DictReader(io.StringIO(text))), hashlib.sha256(payload).hexdigest()
 
 
 def _dataset_revision(repo_id: str, revision: str) -> str:
@@ -68,19 +78,21 @@ def main() -> None:
     clutrr_revision = _dataset_revision(
         clutrr_cfg["dataset_id"], str(clutrr_cfg["revision"])
     )
-    clutrr = load_dataset(
-        clutrr_cfg["dataset_id"],
-        clutrr_cfg["dataset_config"],
-        split=clutrr_cfg["split"],
-        revision=clutrr_revision,
-    )
+    clutrr, clutrr_sha = _download_csv(str(clutrr_cfg["data_url"]))
+    expected_clutrr_sha = str(clutrr_cfg["expected_sha256"])
+    if clutrr_sha != expected_clutrr_sha:
+        raise SystemExit(
+            "CLUTRR CSV checksum mismatch: "
+            f"expected={expected_clutrr_sha}, actual={clutrr_sha}"
+        )
     clutrr_rows = adapt_clutrr(clutrr, count, seed)
     provenance["clutrr"] = {
         **clutrr_cfg,
         "resolved_revision": clutrr_revision,
+        "download_sha256": clutrr_sha,
+        "loader": "direct_csv_without_legacy_dataset_script",
         "raw_rows": len(clutrr),
         "adapted_rows": len(clutrr_rows),
-        "dataset_fingerprint": getattr(clutrr, "_fingerprint", None),
     }
     print(f"CLUTRR: adapted {len(clutrr_rows)}/{len(clutrr)}")
 

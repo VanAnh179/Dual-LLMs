@@ -1,6 +1,7 @@
 """Adapters from official reasoning benchmarks to the V02 split-view schema."""
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import random
@@ -11,7 +12,7 @@ from typing import Any, Iterable
 from src.V02_benchmark import LABELS
 
 
-ADAPTER_VERSION = "v02o.1"
+ADAPTER_VERSION = "v02o.2"
 OFFICIAL_FAMILIES = (
     "relational_csp",
     "logic_grid",
@@ -126,6 +127,13 @@ def adapt_clutrr(
             continue
         source_id = str(record.get("id") or canonical_hash(record)[:20])
         query = record.get("query")
+        if isinstance(query, str):
+            try:
+                parsed_query = ast.literal_eval(query)
+            except (SyntaxError, ValueError):
+                parsed_query = None
+            if isinstance(parsed_query, (list, tuple)) and len(parsed_query) == 2:
+                query = parsed_query
         if isinstance(query, (list, tuple)) and len(query) == 2:
             query_text = f"What is {query[1]}'s family relation to {query[0]}?"
         else:
