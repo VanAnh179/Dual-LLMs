@@ -222,3 +222,17 @@ CUDA_VISIBLE_DEVICES=0 python scripts/V02_evaluate_split_vs_single.py \
   --config configs/v02_split_vs_single.yaml \
   --external-config configs/v02_official_external.yaml
 ```
+
+## Kaggle T4 x2
+
+Create the deterministic upload bundle:
+
+```bash
+python scripts/V02_package_kaggle_bundle.py
+```
+
+Upload `data/V02_kaggle_training_bundle.zip` as a Kaggle Dataset, open
+`notebooks/V02_Kaggle_T4x2_full_train.ipynb`, select **GPU T4 x2**, enable
+Internet, and run all cells. The notebook verifies every bundled file, runs an
+isolated GPU smoke train/eval, requires finite and improving full-run loss
+windows, then runs controlled and official external evaluations.

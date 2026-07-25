@@ -1,0 +1,48 @@
+experiment_name: V02_kaggle_smoke
+source_dataset_config: configs/v02_multifamily_benchmark.yaml
+model_name: Qwen/Qwen2.5-1.5B-Instruct
+require_cuda: true
+seed: 20260725
+data:
+  train: data/v02/V02_multifamily_train.jsonl
+  dev: data/v02/V02_multifamily_dev.jsonl
+  test: data/v02/V02_multifamily_test.jsonl
+training:
+  epochs: 1
+  max_seq_length: 512
+  learning_rate: 0.0002
+  weight_decay: 0.01
+  single_batch_size: 2
+  single_gradient_accumulation_steps: 2
+  split_batch_size: 1
+  split_gradient_accumulation_steps: 4
+  max_grad_norm: 1.0
+  logging_steps: 1
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+bridge:
+  layer_index: 14
+  bottleneck_dim: 64
+evaluation:
+  batch_size: 2
+  max_new_tokens: 32
+  dtype: float16
+  bootstrap_resamples: 100
+outputs:
+  root: outputs/V02_kaggle_smoke
+  single_adapter_root: outputs/V02_kaggle_smoke/adapters/single
+  split_adapter: outputs/V02_kaggle_smoke/adapters/split/receiver_lora
+  bridge: outputs/V02_kaggle_smoke/adapters/split/latent_bridge.pt
+  training_manifest: outputs/V02_kaggle_smoke/metrics/training_manifest.json
+  metrics: outputs/V02_kaggle_smoke/metrics/eval_metrics.json
+  generation_dir: outputs/V02_kaggle_smoke/generations

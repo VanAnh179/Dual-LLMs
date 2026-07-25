@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import math
 import random
 import sys
 from pathlib import Path
@@ -45,7 +46,7 @@ def main() -> None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     device = torch.device("cuda")
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     train_path = project_path(cfg["data"]["train"])
     rows = read_jsonl(train_path)
     random.Random(seed).shuffle(rows)
@@ -87,6 +88,7 @@ def main() -> None:
         lr=float(train_cfg["learning_rate"]),
         weight_decay=float(train_cfg.get("weight_decay", 0.0)),
     )
+    scaler = torch.amp.GradScaler("cuda", enabled=dtype == torch.float16)
     layer_index = int(bridge_cfg["layer_index"])
     extractor = HiddenStateExtractor(get_layer_by_index(model_a, layer_index))
     receiver_layer = get_layer_by_index(model_b, layer_index)
@@ -100,6 +102,8 @@ def main() -> None:
     global_step = 0
     micro_step = 0
     running_loss = 0.0
+    window_micro_steps = 0
+    optimizer_step_losses: list[float] = []
     stop = False
     for epoch in range(epochs):
         for start in range(0, len(rows), batch_size):
@@ -109,7 +113,11 @@ def main() -> None:
             )
             extractor.clear()
             with torch.no_grad():
-                model_a(**a_inputs, use_cache=False)
+                with torch.autocast(
+                    device_type="cuda", dtype=dtype,
+                    enabled=dtype == torch.float16,
+                ):
+                    model_a(**a_inputs, use_cache=False)
             if extractor.hidden_states is None:
                 raise RuntimeError("Agent A hidden-state hook did not fire.")
             z = bridge.encode(
@@ -122,24 +130,40 @@ def main() -> None:
                 receiver_layer, lambda hidden, message=z: bridge.inject(hidden, message)
             )
             try:
-                loss = model_b(**b_inputs, use_cache=False).loss
+                with torch.autocast(
+                    device_type="cuda", dtype=dtype,
+                    enabled=dtype == torch.float16,
+                ):
+                    loss = model_b(**b_inputs, use_cache=False).loss
             finally:
                 injector.remove()
-            (loss / grad_accum).backward()
-            running_loss += float(loss.detach())
+            loss_value = float(loss.detach())
+            if not math.isfinite(loss_value):
+                raise RuntimeError(
+                    f"split: non-finite loss at micro step {micro_step + 1}: "
+                    f"{loss_value}"
+                )
+            scaler.scale(loss / grad_accum).backward()
+            running_loss += loss_value
+            window_micro_steps += 1
             micro_step += 1
             should_step = micro_step % grad_accum == 0 or start + batch_size >= len(rows)
             if should_step:
+                scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(trainable, max_grad_norm)
-                optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
                 optimizer.zero_grad(set_to_none=True)
                 global_step += 1
+                step_loss = running_loss / window_micro_steps
+                optimizer_step_losses.append(step_loss)
                 if global_step == 1 or global_step % logging_steps == 0:
                     print(
                         f"split: step={global_step} epoch={epoch + 1}/{epochs} "
-                        f"loss={running_loss / min(grad_accum, micro_step):.6f}"
+                        f"loss={step_loss:.6f}"
                     )
                 running_loss = 0.0
+                window_micro_steps = 0
                 if args.max_steps is not None and global_step >= args.max_steps:
                     stop = True
                     break
@@ -152,6 +176,13 @@ def main() -> None:
     tokenizer.save_pretrained(adapter_path)
     bridge_path = project_path(cfg["outputs"]["bridge"])
     bridge.save(bridge_path)
+    convergence_window = min(20, len(optimizer_step_losses))
+    first_window_mean = (
+        sum(optimizer_step_losses[:convergence_window]) / convergence_window
+    )
+    last_window_mean = (
+        sum(optimizer_step_losses[-convergence_window:]) / convergence_window
+    )
     manifest = read_json(cfg["outputs"]["training_manifest"], default={})
     manifest.update({
         "experiment_name": cfg["experiment_name"],
@@ -177,6 +208,17 @@ def main() -> None:
         "sample_ids_sha256": hashlib.sha256(
             "\n".join(str(row["sample_id"]) for row in rows).encode()
         ).hexdigest(),
+        "initial_optimizer_step_loss": optimizer_step_losses[0],
+        "final_optimizer_step_loss": optimizer_step_losses[-1],
+        "best_optimizer_step_loss": min(optimizer_step_losses),
+        "convergence_window_steps": convergence_window,
+        "first_window_mean_loss": first_window_mean,
+        "last_window_mean_loss": last_window_mean,
+        "loss_improved": last_window_mean < first_window_mean,
+        "all_losses_finite": all(
+            math.isfinite(value) for value in optimizer_step_losses
+        ),
+        "optimizer_step_loss_curve": optimizer_step_losses,
     }
     write_json(cfg["outputs"]["training_manifest"], manifest)
     print(f"Saved receiver adapter: {adapter_path}")
