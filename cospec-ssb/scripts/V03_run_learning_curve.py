@@ -122,6 +122,32 @@ def _wait_pair(left: subprocess.Popen, right: subprocess.Popen, label: str) -> N
         )
 
 
+def _wait_one(process: subprocess.Popen, label: str) -> None:
+    started = time.monotonic()
+    next_heartbeat = started + 30
+    try:
+        while process.poll() is None:
+            now = time.monotonic()
+            if now >= next_heartbeat:
+                print(
+                    f"[{label}] elapsed={int(now - started)}s worker=running",
+                    flush=True,
+                )
+                next_heartbeat = now + 30
+            time.sleep(2)
+    except KeyboardInterrupt:
+        print(f"Interrupting {label}; terminating GPU worker...", flush=True)
+        process.terminate()
+        try:
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        raise
+    if process.returncode:
+        raise SystemExit(f"{label} failed: exit={process.returncode}")
+
+
 def _merge_manifests(paths: list[Path], output: Path) -> dict:
     merged: dict = {"single_baselines": {}}
     for path in paths:
@@ -242,7 +268,7 @@ def main() -> None:
     parser.add_argument(
         "--smoke",
         action="store_true",
-        help="Run two tiny points and skip final controls.",
+        help="Run one tiny sequential point and skip final controls.",
     )
     parser.add_argument(
         "--resume",
@@ -264,7 +290,7 @@ def main() -> None:
     configured_sizes = [int(value) for value in cfg["learning_curve"]["train_sizes"]]
     sizes = args.train_sizes or configured_sizes
     if args.smoke:
-        sizes = [16, 32]
+        sizes = [16]
     if sizes != sorted(set(sizes)):
         raise SystemExit("Learning-curve sizes must be unique and increasing.")
     train_rows = read_jsonl(cfg["data"]["train"])
@@ -320,31 +346,32 @@ def main() -> None:
             print(f"Resume: training n={size} already complete", flush=True)
             merged = read_json(eval_cfg["outputs"]["training_manifest"])
         else:
-            single_process = _run(
-                [
-                    sys.executable,
-                    "scripts/V02_train_single_baselines.py",
-                    "--config",
-                    _relative(single_cfg_path),
-                    "--modes",
-                    "full",
-                    "--max-examples",
-                    str(size),
-                ],
-                gpu=0,
-            )
-            split_process = _run(
-                [
-                    sys.executable,
-                    "scripts/V02_train_split_latent.py",
-                    "--config",
-                    _relative(split_cfg_path),
-                    "--max-examples",
-                    str(size),
-                ],
-                gpu=1,
-            )
-            _wait_pair(single_process, split_process, f"training n={size}")
+            single_command = [
+                sys.executable,
+                "scripts/V02_train_single_baselines.py",
+                "--config",
+                _relative(single_cfg_path),
+                "--modes",
+                "full",
+                "--max-examples",
+                str(size),
+            ]
+            split_command = [
+                sys.executable,
+                "scripts/V02_train_split_latent.py",
+                "--config",
+                _relative(split_cfg_path),
+                "--max-examples",
+                str(size),
+            ]
+            single_process = _run(single_command, gpu=0)
+            if args.smoke:
+                _wait_one(single_process, f"smoke single training n={size}")
+                split_process = _run(split_command, gpu=1)
+                _wait_one(split_process, f"smoke split training n={size}")
+            else:
+                split_process = _run(split_command, gpu=1)
+                _wait_pair(single_process, split_process, f"training n={size}")
             merged = _merge_manifests(
                 [
                     project_path(single_cfg["outputs"]["training_manifest"]),

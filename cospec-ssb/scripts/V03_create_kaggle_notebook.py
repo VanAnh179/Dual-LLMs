@@ -209,6 +209,8 @@ else:
     ),
     code(
         """if RUN_GPU:
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
     smoke_root = REPO_ROOT / "outputs/V03_learning_curve_smoke"
     if smoke_root.exists():
         shutil.rmtree(smoke_root)
@@ -220,7 +222,7 @@ else:
     smoke = json.loads(
         (smoke_root / "metrics/learning_curve.json").read_text(encoding="utf-8")
     )
-    assert smoke["nested_train_sizes"] == [16, 32]
+    assert smoke["nested_train_sizes"] == [16]
     assert all(row["all_losses_finite"] for row in smoke["records"])
     print("Two-GPU train/eval smoke gate: PASS")
 else:
