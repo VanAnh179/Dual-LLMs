@@ -1,0 +1,26 @@
+experiment_name: V02_multifamily_split_benchmark
+generator_version: v02.0
+seed: 20260725
+families:
+  - relational_csp
+  - logic_grid
+  - arithmetic_constraint
+  - candidate_verification
+difficulties:
+  - easy
+  - medium
+  - hard
+rows_per_family:
+  train: 2000
+  dev: 256
+  test: 512
+seed_offsets:
+  train: 0
+  dev: 1000000
+  test: 2000000
+output_paths:
+  train: data/v02/V02_multifamily_train.jsonl
+  dev: data/v02/V02_multifamily_dev.jsonl
+  test: data/v02/V02_multifamily_test.jsonl
+  validation: outputs/V02_multifamily_benchmark/metrics/dataset_validation.json
+  manifest: outputs/V02_multifamily_benchmark/metrics/dataset_manifest.json

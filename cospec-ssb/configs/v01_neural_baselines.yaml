@@ -1,0 +1,20 @@
+experiment_name: V01_neural_baselines
+model_name: Qwen/Qwen2.5-1.5B-Instruct
+dataset_path: data/raw/V01_split_view_test.jsonl
+expected_test_examples: 100
+seed: 42
+modes:
+  - view_a
+  - view_b
+  - full_problem
+generation:
+  batch_size: 8
+  max_new_tokens: 512
+  dtype: float16
+gates:
+  partial_view_max_accuracy: 0.28
+  full_problem_min_accuracy: 0.80
+output:
+  metrics_path: outputs/V01_neural_baselines/metrics/neural_baselines.json
+  generation_dir: outputs/V01_neural_baselines/generations
+  report_path: notes/V01_neural_baseline_results.md

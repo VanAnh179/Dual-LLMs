@@ -1,0 +1,28 @@
+experiment_name: S03_causal_diagnostic_gsm8k
+seed: 42
+sampling_mode: first_n
+max_eval_examples: 100
+source_s02_config: configs/s02_minimal_coupling_gsm8k.yaml
+source_s02_metrics: outputs/S02_minimal_coupling_gsm8k/metrics/eval_metrics.json
+interventions:
+  - matched
+  - shuffled
+  - zero
+  - noise
+shuffle:
+  seed: 42
+  require_derangement: true
+noise:
+  seed: 42
+  statistics: per_dimension_empirical_mean_std
+  min_std: 1.0e-6
+bootstrap:
+  enabled: true
+  num_resamples: 10000
+  confidence_level: 0.95
+output:
+  root_dir: outputs/S03_causal_diagnostic_gsm8k
+  cache_path: outputs/S03_causal_diagnostic_gsm8k/cache/z_cache.pt
+  generation_dir: outputs/S03_causal_diagnostic_gsm8k/generations
+  metrics_path: outputs/S03_causal_diagnostic_gsm8k/metrics/causal_diagnostic.json
+

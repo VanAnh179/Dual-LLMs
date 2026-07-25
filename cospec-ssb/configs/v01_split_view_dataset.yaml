@@ -1,0 +1,23 @@
+experiment_name: V01_split_view_dataset
+generator_version: v01.2
+seed: 42
+split_sizes:
+  train: 800
+  dev: 100
+  test: 100
+n_entities_distribution:
+  4: 1.0
+answer_balancing: exact_round_robin
+max_generation_attempts: 200000
+seed_offsets:
+  review: 3000000
+  train: 0
+  dev: 1000000
+  test: 2000000
+output_paths:
+  review: data/raw/V01_sample_review_20.jsonl
+  train: data/raw/V01_split_view_train.jsonl
+  dev: data/raw/V01_split_view_dev.jsonl
+  test: data/raw/V01_split_view_test.jsonl
+  validation: outputs/V01_split_view_dataset/metrics/dataset_validation.json
+  probes: outputs/V01_split_view_dataset/metrics/leakage_probe_results.json

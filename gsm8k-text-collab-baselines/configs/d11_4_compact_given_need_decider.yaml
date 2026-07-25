@@ -1,0 +1,76 @@
+experiment_name: D11_4_compact_given_need_decider_sft
+
+teacher_notes_model_name: Qwen/Qwen2.5-14B-Instruct
+teacher_solution_model_name: Qwen/Qwen2.5-Math-7B-Instruct
+student_model_name: Qwen/Qwen2.5-1.5B-Instruct
+
+require_cuda: true
+
+data:
+  raw_train_path: data/raw/train.jsonl
+  raw_test_path: data/raw/test.jsonl
+  filtered_trace_path: data/filtered/D11_4_compact_given_need_decider_sft/given_need_traces.jsonl
+  train_dir: data/train/D11_4_compact_given_need_decider_sft
+
+output:
+  root_dir: outputs/D11_4_compact_given_need_decider_sft
+  adapter_dir: outputs/D11_4_compact_given_need_decider_sft/adapters
+  generation_dir: outputs/D11_4_compact_given_need_decider_sft/generations
+  metrics_dir: outputs/D11_4_compact_given_need_decider_sft/metrics
+  analysis_dir: outputs/D11_4_compact_given_need_decider_sft/analysis
+
+sampling:
+  seed: 42
+  sampling_mode: first_n
+  max_train_examples: 200
+  max_eval_examples: 100
+
+bootstrap:
+  notes_max_new_tokens: 96
+  solution_max_new_tokens: 512
+  notes_temperature: 0.0
+  notes_top_p: 1.0
+  solution_temperature: 0.0
+  solution_top_p: 1.0
+
+notes:
+  max_given_words: 36
+  max_need_words: 14
+  max_chars: 320
+  reject_gold_in_notes: false
+
+decider_training:
+  include_good_notes: true
+  include_empty_notes: false
+
+evaluation:
+  base_max_new_tokens: 512
+  notes_max_new_tokens: 96
+  decider_max_new_tokens: 512
+  temperature: 0.0
+  top_p: 1.0
+
+training:
+  max_seq_length: 1536
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 2e-4
+  num_train_epochs: 1
+  logging_steps: 10
+  save_steps: 100
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+loss:
+  type: standard_sft

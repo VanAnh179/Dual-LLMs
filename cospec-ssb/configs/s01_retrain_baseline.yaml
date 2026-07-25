@@ -1,0 +1,39 @@
+# Config for retraining D11.0 baseline adapters within cospec-ssb repo.
+# Used by: scripts/train_alternating_lora.py
+# Adapters saved to: outputs/S01_baseline_retrained/adapters/
+
+student_model_name: Qwen/Qwen2.5-1.5B-Instruct
+require_cuda: true
+
+output_dir: outputs/S01_baseline_retrained
+
+max_train_examples: 180
+sampling_mode: first_n
+seed: 42
+num_alternating_rounds: 1
+
+max_new_tokens: 512
+temperature: 0.7
+top_p: 0.9
+
+training:
+  max_seq_length: 1536
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 2e-4
+  num_train_epochs: 1
+  logging_steps: 10
+  save_steps: 100
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

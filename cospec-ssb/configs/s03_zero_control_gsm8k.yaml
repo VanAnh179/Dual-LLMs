@@ -1,0 +1,15 @@
+experiment_name: S03_zero_control_gsm8k
+source_s02_config: configs/s02_minimal_coupling_gsm8k.yaml
+source_s02_metrics: outputs/S02_minimal_coupling_gsm8k/metrics/eval_metrics.json
+seed: 42
+sampling_mode: first_n
+max_train_examples: 180
+max_eval_examples: 100
+zero_message: true
+output:
+  root_dir: outputs/S03_zero_control_gsm8k
+  adapter_dir: outputs/S03_zero_control_gsm8k/adapters/agent_B_zero_control_sft
+  metrics_path: outputs/S03_zero_control_gsm8k/metrics/eval_metrics.json
+  predictions_path: outputs/S03_zero_control_gsm8k/generations/eval_predictions.jsonl
+  train_log_path: outputs/S03_zero_control_gsm8k/logs/train_log.jsonl
+

@@ -1,0 +1,28 @@
+experiment_name: D12_0_voting_baseline
+
+student_model_name: Qwen/Qwen2.5-1.5B-Instruct
+require_cuda: true
+
+data:
+  raw_test_path: data/raw/test.jsonl
+
+output:
+  root_dir: outputs/D12_0_voting
+  generation_dir: outputs/D12_0_voting/generations
+  metrics_dir: outputs/D12_0_voting/metrics
+
+# Reuse adapters from D11.0 (NO additional training)
+# Paths relative to project root — point to sibling repo's adapters
+adapters:
+  agent_a: outputs/D11_0_adapters_regenerated/adapters/agent_A_round_1
+  agent_b: outputs/D11_0_adapters_regenerated/adapters/agent_B_round_1
+
+sampling:
+  seed: 42
+  sampling_mode: first_n
+  max_eval_examples: 100
+
+evaluation:
+  max_new_tokens: 512
+  temperature: 0.0
+  top_p: 1.0

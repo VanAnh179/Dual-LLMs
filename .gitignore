@@ -1,0 +1,52 @@
+# Private datasets and generated experiment artifacts
+**/data/
+**/outputs/
+**/notes/
+**/reports/
+**/logs/
+*.jsonl
+
+# Model weights, checkpoints, and optimizer state
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+
+# Credentials and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+*token*.txt
+
+# Python caches and environments
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# IDE and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.bak
+*.swp
+~$*

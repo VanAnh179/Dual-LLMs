@@ -1,0 +1,71 @@
+experiment_name: D11_3_useful_notes_decider_sft
+
+teacher_model_name: Qwen/Qwen2.5-Math-7B-Instruct
+student_model_name: Qwen/Qwen2.5-1.5B-Instruct
+
+data:
+  raw_train_path: data/raw/train.jsonl
+  raw_test_path: data/raw/test.jsonl
+  filtered_trace_path: data/filtered/D11_3_useful_notes_decider_sft/useful_note_traces.jsonl
+  train_dir: data/train/D11_3_useful_notes_decider_sft
+
+output:
+  root_dir: outputs/D11_3_useful_notes_decider_sft
+  adapter_dir: outputs/D11_3_useful_notes_decider_sft/adapters
+  generation_dir: outputs/D11_3_useful_notes_decider_sft/generations
+  metrics_dir: outputs/D11_3_useful_notes_decider_sft/metrics
+  analysis_dir: outputs/D11_3_useful_notes_decider_sft/analysis
+
+sampling:
+  seed: 42
+  sampling_mode: first_n
+  max_train_examples: 100
+  max_eval_examples: 100
+
+bootstrap:
+  num_candidates: 1
+  max_new_tokens: 384
+  temperature: 0.7
+  top_p: 0.9
+
+notes:
+  max_bullets: 4
+  max_words_per_bullet: 20
+  max_chars: 500
+  reject_gold_in_last_note_line: false
+
+decider_training:
+  include_good_notes: true
+  include_partial_notes: true
+  include_empty_notes: false
+
+evaluation:
+  base_max_new_tokens: 256
+  notes_max_new_tokens: 128
+  decider_max_new_tokens: 256
+  temperature: 0.7
+  top_p: 0.9
+
+training:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 2e-4
+  num_train_epochs: 1
+  logging_steps: 10
+  save_steps: 100
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+loss:
+  type: standard_sft
