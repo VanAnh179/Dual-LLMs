@@ -12,7 +12,7 @@ from typing import Any, Iterable
 from src.V02_benchmark import LABELS
 
 
-ADAPTER_VERSION = "v02o.2"
+ADAPTER_VERSION = "v02o.3"
 OFFICIAL_FAMILIES = (
     "relational_csp",
     "logic_grid",
@@ -338,12 +338,20 @@ def adapt_prm800k(
             ]
             positives = [item for item in completions if item.get("rating") == 1]
             nonpositives = [item for item in completions if item.get("rating") != 1]
-            if len(positives) != 1 or len(nonpositives) < 3:
+            if len(positives) != 1:
+                continue
+            positive_text = str(positives[0].get("text") or "").strip()
+            unique_nonpositives: dict[str, dict[str, Any]] = {}
+            for completion in nonpositives:
+                text = str(completion.get("text") or "").strip()
+                if text and text != positive_text:
+                    unique_nonpositives.setdefault(text, completion)
+            if not positive_text or len(unique_nonpositives) < 3:
                 continue
             source_id = f"phase2_test:{record_index}:step:{step_index}"
             candidates.append((
                 source_id, problem, reference, steps, step_index,
-                positives[0], nonpositives,
+                positives[0], list(unique_nonpositives.values()),
             ))
     candidates.sort(key=lambda item: canonical_hash([seed, item[0]]))
 

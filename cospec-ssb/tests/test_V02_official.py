@@ -120,3 +120,27 @@ def test_prm_adapter_uses_human_step_ratings_as_gold():
     row = rows[0]
     _assert_valid_row(row, "candidate_verification")
     assert row["metadata"]["option_values"][row["gold_answer"]] == "Correct next step."
+
+
+def test_prm_adapter_skips_steps_without_three_distinct_negative_texts():
+    record = {
+        "question": {
+            "problem": "Compute 3 + 3.",
+            "ground_truth_answer": "6",
+        },
+        "label": {
+            "steps": [{
+                "completions": [
+                    {"text": "Correct.", "rating": 1, "flagged": None},
+                    {"text": "Repeated.", "rating": -1, "flagged": None},
+                    {"text": "Repeated.", "rating": 0, "flagged": None},
+                    {"text": "Another.", "rating": -1, "flagged": None},
+                ],
+                "chosen_completion": 0,
+                "human_completion": None,
+            }]
+        },
+        "is_quality_control_question": False,
+        "is_initial_screening_question": False,
+    }
+    assert adapt_prm800k([record], 1, 13) == []
