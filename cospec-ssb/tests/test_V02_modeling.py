@@ -1,5 +1,8 @@
 from src.V02_benchmark import FAMILIES, generate_block
-from src.V02_modeling import extract_option, messages_for_mode, summarize_predictions
+from src.V02_modeling import (
+    extract_option, messages_for_mode, select_nested_training_rows,
+    summarize_predictions,
+)
 from scripts.V02_evaluate_split_vs_single import _shuffled_sources
 
 
@@ -48,3 +51,18 @@ def test_shuffled_control_uses_a_different_block_in_the_same_stratum():
     assert all(rows[index]["family"] == rows[origin]["family"] for index, origin in enumerate(source))
     assert all(rows[index]["difficulty"] == rows[origin]["difficulty"] for index, origin in enumerate(source))
     assert all(rows[index]["block_id"] != rows[origin]["block_id"] for index, origin in enumerate(source))
+
+
+def test_nested_training_selection_keeps_complete_counterfactual_blocks():
+    rows = (
+        generate_block("logic_grid", "hard", 100)
+        + generate_block("logic_grid", "hard", 101)
+        + generate_block("logic_grid", "hard", 102)
+    )
+    first = select_nested_training_rows(rows, 16, 9)
+    second = select_nested_training_rows(rows, 32, 9)
+    assert {row["sample_id"] for row in first} <= {
+        row["sample_id"] for row in second
+    }
+    assert len({row["block_id"] for row in first}) == 1
+    assert len({row["block_id"] for row in second}) == 2

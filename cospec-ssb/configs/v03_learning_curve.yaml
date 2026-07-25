@@ -1,0 +1,58 @@
+experiment_name: V03_learning_curve
+source_dataset_config: configs/v03_ood_benchmark.yaml
+model_name: Qwen/Qwen2.5-1.5B-Instruct
+require_cuda: true
+seed: 20260726
+data:
+  train: data/v03/V03_multifamily_train.jsonl
+  dev: data/v03/V03_multifamily_dev.jsonl
+  iid_test: data/v03/V03_multifamily_iid_test.jsonl
+  test: data/v03/V03_multifamily_ood_test.jsonl
+training:
+  epochs: 1
+  max_seq_length: 1536
+  learning_rate: 0.0002
+  weight_decay: 0.01
+  single_batch_size: 2
+  single_gradient_accumulation_steps: 8
+  split_batch_size: 1
+  split_gradient_accumulation_steps: 16
+  max_grad_norm: 1.0
+  logging_steps: 50
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+bridge:
+  layer_index: 14
+  bottleneck_dim: 64
+evaluation:
+  batch_size: 8
+  max_new_tokens: 32
+  dtype: float16
+  bootstrap_resamples: 5000
+learning_curve:
+  train_sizes:
+    - 2048
+    - 4096
+    - 8192
+    - 16384
+    - 32768
+  intermediate_eval_examples: 1024
+  final_eval_examples: null
+outputs:
+  root: outputs/V03_learning_curve
+  single_adapter_root: outputs/V03_learning_curve/adapters/single
+  split_adapter: outputs/V03_learning_curve/adapters/split/receiver_lora
+  bridge: outputs/V03_learning_curve/adapters/split/latent_bridge.pt
+  training_manifest: outputs/V03_learning_curve/metrics/training_manifest.json
+  metrics: outputs/V03_learning_curve/metrics/eval_metrics.json
+  generation_dir: outputs/V03_learning_curve/generations

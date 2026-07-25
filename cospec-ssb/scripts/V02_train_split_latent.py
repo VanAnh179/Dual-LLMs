@@ -33,7 +33,9 @@ def main() -> None:
 
     from src.S01_hook_utils import HiddenStateExtractor, HiddenStateInjector, get_layer_by_index
     from src.V02_latent_bridge import MaskedLatentBridge
-    from src.V02_modeling import encode_prompt_batch, encode_supervised_batch
+    from src.V02_modeling import (
+        encode_prompt_batch, encode_supervised_batch, select_nested_training_rows,
+    )
     from src.V02_runtime import require_v02_preflight
     from src.data_utils import project_path, read_json, read_jsonl, write_json
 
@@ -48,10 +50,9 @@ def main() -> None:
     device = torch.device("cuda")
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     train_path = project_path(cfg["data"]["train"])
-    rows = read_jsonl(train_path)
-    random.Random(seed).shuffle(rows)
-    if args.max_examples is not None:
-        rows = rows[: args.max_examples]
+    rows = select_nested_training_rows(
+        read_jsonl(train_path), args.max_examples, seed
+    )
 
     tokenizer = AutoTokenizer.from_pretrained(cfg["model_name"], trust_remote_code=True)
     if tokenizer.pad_token is None:

@@ -6,7 +6,6 @@ import argparse
 import gc
 import hashlib
 import math
-import random
 import sys
 from pathlib import Path
 
@@ -36,7 +35,7 @@ def main() -> None:
     from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    from src.V02_modeling import encode_supervised_batch
+    from src.V02_modeling import encode_supervised_batch, select_nested_training_rows
     from src.V02_runtime import require_v02_preflight
     from src.data_utils import project_path, read_json, read_jsonl, write_json
 
@@ -64,10 +63,9 @@ def main() -> None:
     })
 
     for mode in args.modes:
-        rows = list(original_rows)
-        random.Random(seed).shuffle(rows)
-        if args.max_examples is not None:
-            rows = rows[: args.max_examples]
+        rows = select_nested_training_rows(
+            original_rows, args.max_examples, seed
+        )
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
         model = AutoModelForCausalLM.from_pretrained(

@@ -1,0 +1,34 @@
+experiment_name: V03_ood_multifamily_benchmark
+generator_version: v03.0
+seed: 20260726
+families:
+  - relational_csp
+  - logic_grid
+  - arithmetic_constraint
+  - candidate_verification
+difficulties:
+  - easy
+  - medium
+  - hard
+rows_per_family:
+  train: 8192
+  dev: 1024
+  iid_test: 1024
+  test: 1024
+split_profiles:
+  train: train
+  dev: iid
+  iid_test: iid
+  test: ood
+seed_offsets:
+  train: 0
+  dev: 1000000
+  iid_test: 2000000
+  test: 3000000
+output_paths:
+  train: data/v03/V03_multifamily_train.jsonl
+  dev: data/v03/V03_multifamily_dev.jsonl
+  iid_test: data/v03/V03_multifamily_iid_test.jsonl
+  test: data/v03/V03_multifamily_ood_test.jsonl
+  validation: outputs/V03_ood_multifamily_benchmark/metrics/dataset_validation.json
+  manifest: outputs/V03_ood_multifamily_benchmark/metrics/dataset_manifest.json

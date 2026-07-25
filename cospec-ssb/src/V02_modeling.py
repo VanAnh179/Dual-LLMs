@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import random
 from collections import Counter, defaultdict
 from typing import Any
 
@@ -18,6 +19,38 @@ Do not assume access to PRIVATE VIEW B. Your hidden states will be used as the m
 RECEIVER_SYSTEM = """Solve the benchmark task from PRIVATE VIEW B and the injected latent message.
 The valid labels are OPTION_0, OPTION_1, OPTION_2, and OPTION_3.
 End with exactly one line: ANSWER: OPTION_X."""
+
+
+def select_nested_training_rows(
+    rows: list[dict[str, Any]], max_examples: int | None, seed: int
+) -> list[dict[str, Any]]:
+    """Select a family-balanced nested prefix while keeping blocks intact."""
+    by_block: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        by_block[str(row["block_id"])].append(row)
+    family_blocks: dict[str, list[str]] = defaultdict(list)
+    for block_id, block in by_block.items():
+        family_blocks[str(block[0]["family"])].append(block_id)
+    for family, block_ids in family_blocks.items():
+        block_ids.sort()
+        random.Random(f"{seed}:{family}").shuffle(block_ids)
+    block_ids = []
+    families = sorted(family_blocks)
+    max_blocks = max(len(ids) for ids in family_blocks.values())
+    for index in range(max_blocks):
+        for family in families:
+            if index < len(family_blocks[family]):
+                block_ids.append(family_blocks[family][index])
+    selected: list[dict[str, Any]] = []
+    for block_id in block_ids:
+        block = sorted(
+            by_block[block_id],
+            key=lambda row: (int(row["variant_a"]), int(row["variant_b"])),
+        )
+        selected.extend(block)
+    if max_examples is not None:
+        selected = selected[:max_examples]
+    return selected
 
 
 def messages_for_mode(mode: str, row: dict[str, Any]) -> list[dict[str, str]]:

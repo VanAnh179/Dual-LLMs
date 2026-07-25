@@ -78,6 +78,22 @@ def main() -> None:
     )
     parser.add_argument("--max-examples", type=int)
     parser.add_argument("--batch-size", type=int)
+    parser.add_argument(
+        "--test-split",
+        default="test",
+        help="Configured data split to evaluate (for example test or iid_test).",
+    )
+    all_modes = (
+        "base_full", "single_full", "single_a", "single_b",
+        "split_matched", "split_shuffled", "split_zero",
+    )
+    parser.add_argument(
+        "--modes",
+        nargs="+",
+        choices=all_modes,
+        default=all_modes,
+        help="Evaluate only these conditions. Useful for learning curves.",
+    )
     args = parser.parse_args()
 
     import torch
@@ -88,7 +104,7 @@ def main() -> None:
     from src.V02_latent_bridge import MaskedLatentBridge
     from src.V02_modeling import (
         encode_prompt_batch, extract_option, paired_stratified_bootstrap,
-        summarize_predictions,
+        select_nested_training_rows, summarize_predictions,
     )
     from src.V02_runtime import (
         require_official_external_preflight, require_training_artifacts,
@@ -101,7 +117,12 @@ def main() -> None:
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required for V02 model evaluation.")
     cfg, _ = require_v02_preflight(args.config)
-    require_training_artifacts(cfg, require_full=args.max_examples is None)
+    selected_modes = set(args.modes)
+    require_training_artifacts(
+        cfg,
+        require_full=args.max_examples is None,
+        modes=selected_modes,
+    )
     eval_cfg = cfg["evaluation"]
     external_cfg = None
     external_manifest = None
@@ -113,12 +134,33 @@ def main() -> None:
         metrics_path = external_cfg["output_paths"]["metrics"]
         generation_path = external_cfg["output_paths"]["generation_dir"]
     else:
-        test_path = project_path(cfg["data"]["test"])
-        metrics_path = cfg["outputs"]["metrics"]
-        generation_path = cfg["outputs"]["generation_dir"]
+        if args.test_split not in cfg["data"]:
+            raise SystemExit(
+                f"Unknown configured test split {args.test_split!r}; "
+                f"available={sorted(cfg['data'])}"
+            )
+        test_path = project_path(cfg["data"][args.test_split])
+        if args.test_split == "test":
+            metrics_path = cfg["outputs"]["metrics"]
+            generation_path = cfg["outputs"]["generation_dir"]
+        else:
+            metrics_base = Path(cfg["outputs"]["metrics"])
+            metrics_path = str(
+                metrics_base.with_name(
+                    f"{metrics_base.stem}_{args.test_split}{metrics_base.suffix}"
+                )
+            ).replace("\\", "/")
+            generation_path = str(
+                Path(cfg["outputs"]["generation_dir"]) / args.test_split
+            ).replace("\\", "/")
     rows = read_jsonl(test_path)
     if args.max_examples is not None:
-        rows = rows[: args.max_examples]
+        if external_cfg is None and all("block_id" in row for row in rows):
+            rows = select_nested_training_rows(
+                rows, args.max_examples, int(cfg["seed"]) + 1009
+            )
+        else:
+            rows = rows[: args.max_examples]
     if not rows:
         raise SystemExit("No test examples selected.")
     device = torch.device("cuda")
@@ -185,115 +227,135 @@ def main() -> None:
         torch.cuda.empty_cache()
 
     single_root = project_path(cfg["outputs"]["single_adapter_root"])
-    evaluate_single("base_full", "full", None)
-    evaluate_single("single_full", "full", single_root / "full")
-    evaluate_single("single_a", "view_a", single_root / "view_a")
-    evaluate_single("single_b", "view_b", single_root / "view_b")
-
-    bridge_path = project_path(cfg["outputs"]["bridge"])
-    receiver_path = project_path(cfg["outputs"]["split_adapter"])
-    if not bridge_path.exists() or not receiver_path.exists():
-        raise SystemExit("Split adapter/bridge artifacts are missing.")
-    bridge = MaskedLatentBridge.load(bridge_path, map_location=device).to(
-        device=device, dtype=dtype
+    single_plan = (
+        ("base_full", "full", None),
+        ("single_full", "full", single_root / "full"),
+        ("single_a", "view_a", single_root / "view_a"),
+        ("single_b", "view_b", single_root / "view_b"),
     )
-    bridge.eval()
-    model_a = AutoModelForCausalLM.from_pretrained(
-        cfg["model_name"], dtype=dtype, trust_remote_code=True
-    ).to(device)
-    model_a.eval().requires_grad_(False)
-    extractor = HiddenStateExtractor(
-        get_layer_by_index(model_a, int(cfg["bridge"]["layer_index"]))
-    )
-    latent_chunks = []
-    for start in range(0, len(rows), batch_size):
-        batch = rows[start : start + batch_size]
-        encoded = encode_prompt_batch(
-            tokenizer, "split_a", batch, max_length, device
-        )
-        extractor.clear()
-        with torch.inference_mode():
-            model_a(**encoded, use_cache=False)
-        latent_chunks.append(
-            bridge.encode(
-                extractor.hidden_states, encoded["attention_mask"]
-            ).detach().cpu()
-        )
-        print(f"encode_a: {min(start + batch_size, len(rows))}/{len(rows)}", end="\r")
-    extractor.remove()
-    extractor.clear()
-    all_z = torch.cat(latent_chunks, dim=0)
-    print(f"Encoded {len(all_z)} latent messages.")
-    del model_a, extractor, latent_chunks, encoded
-    gc.collect()
-    torch.cuda.empty_cache()
+    for mode_name, prompt_mode, adapter_path in single_plan:
+        if mode_name in selected_modes:
+            evaluate_single(mode_name, prompt_mode, adapter_path)
 
-    model_b = AutoModelForCausalLM.from_pretrained(
-        cfg["model_name"], dtype=dtype, trust_remote_code=True
-    ).to(device)
-    model_b = PeftModel.from_pretrained(model_b, receiver_path, is_trainable=False)
-    model_b.eval()
-    receiver_layer = get_layer_by_index(model_b, int(cfg["bridge"]["layer_index"]))
-    shuffled_source = _shuffled_sources(rows, int(cfg["seed"]) + 91)
-    interventions = ("split_matched", "split_shuffled", "split_zero")
-    for intervention in interventions:
-        predictions = []
+    split_modes = selected_modes & {
+        "split_matched", "split_shuffled", "split_zero"
+    }
+    if split_modes:
+        bridge_path = project_path(cfg["outputs"]["bridge"])
+        receiver_path = project_path(cfg["outputs"]["split_adapter"])
+        if not bridge_path.exists() or not receiver_path.exists():
+            raise SystemExit("Split adapter/bridge artifacts are missing.")
+        bridge = MaskedLatentBridge.load(bridge_path, map_location=device).to(
+            device=device, dtype=dtype
+        )
+        bridge.eval()
+        model_a = AutoModelForCausalLM.from_pretrained(
+            cfg["model_name"], dtype=dtype, trust_remote_code=True
+        ).to(device)
+        model_a.eval().requires_grad_(False)
+        extractor = HiddenStateExtractor(
+            get_layer_by_index(model_a, int(cfg["bridge"]["layer_index"]))
+        )
+        latent_chunks = []
         for start in range(0, len(rows), batch_size):
             batch = rows[start : start + batch_size]
-            indices = list(range(start, start + len(batch)))
-            if intervention == "split_matched":
-                z = all_z[indices].to(device=device, dtype=dtype)
-                source_ids = [rows[index]["sample_id"] for index in indices]
-            elif intervention == "split_shuffled":
-                origins = [shuffled_source[index] for index in indices]
-                z = all_z[origins].to(device=device, dtype=dtype)
-                source_ids = [rows[index]["sample_id"] for index in origins]
-            else:
-                z = torch.zeros(
-                    (len(batch), int(cfg["bridge"]["bottleneck_dim"])),
-                    device=device, dtype=dtype,
-                )
-                source_ids = [None] * len(batch)
             encoded = encode_prompt_batch(
-                tokenizer, "split_b", batch, max_length, device
+                tokenizer, "split_a", batch, max_length, device
             )
-            injector = HiddenStateInjector(
-                receiver_layer, lambda hidden, message=z: bridge.inject(hidden, message)
+            extractor.clear()
+            with torch.inference_mode():
+                model_a(**encoded, use_cache=False)
+            latent_chunks.append(
+                bridge.encode(
+                    extractor.hidden_states, encoded["attention_mask"]
+                ).detach().cpu()
             )
-            try:
-                with torch.inference_mode():
-                    generated = model_b.generate(
-                        **encoded,
-                        max_new_tokens=max_new_tokens,
-                        do_sample=False,
-                        pad_token_id=tokenizer.pad_token_id,
-                        eos_token_id=tokenizer.eos_token_id,
-                    )
-            finally:
-                injector.remove()
-            texts = tokenizer.batch_decode(
-                generated[:, encoded["input_ids"].shape[1]:],
-                skip_special_tokens=True,
-            )
-            for row, text, source_id in zip(batch, texts, source_ids):
-                prediction = _prediction(
-                    row, intervention, text, extract_option
-                )
-                prediction["message_source_sample_id"] = source_id
-                predictions.append(prediction)
             print(
-                f"{intervention}: {min(start + batch_size, len(rows))}/{len(rows)}",
+                f"encode_a: {min(start + batch_size, len(rows))}/{len(rows)}",
                 end="\r",
             )
-        print(
-            f"{intervention}: accuracy="
-            f"{sum(int(row['correct']) for row in predictions) / len(predictions):.4f}"
+        extractor.remove()
+        extractor.clear()
+        all_z = torch.cat(latent_chunks, dim=0)
+        print(f"Encoded {len(all_z)} latent messages.")
+        del model_a, extractor, latent_chunks, encoded
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        model_b = AutoModelForCausalLM.from_pretrained(
+            cfg["model_name"], dtype=dtype, trust_remote_code=True
+        ).to(device)
+        model_b = PeftModel.from_pretrained(model_b, receiver_path, is_trainable=False)
+        model_b.eval()
+        receiver_layer = get_layer_by_index(
+            model_b, int(cfg["bridge"]["layer_index"])
         )
-        write_jsonl(generation_dir / f"{intervention}.jsonl", predictions)
-        all_predictions[intervention] = predictions
-    del model_b, bridge
-    gc.collect()
-    torch.cuda.empty_cache()
+        shuffled_source = _shuffled_sources(rows, int(cfg["seed"]) + 91)
+        for intervention in (
+            "split_matched", "split_shuffled", "split_zero"
+        ):
+            if intervention not in split_modes:
+                continue
+            predictions = []
+            for start in range(0, len(rows), batch_size):
+                batch = rows[start : start + batch_size]
+                indices = list(range(start, start + len(batch)))
+                if intervention == "split_matched":
+                    z = all_z[indices].to(device=device, dtype=dtype)
+                    source_ids = [rows[index]["sample_id"] for index in indices]
+                elif intervention == "split_shuffled":
+                    origins = [shuffled_source[index] for index in indices]
+                    z = all_z[origins].to(device=device, dtype=dtype)
+                    source_ids = [rows[index]["sample_id"] for index in origins]
+                else:
+                    z = torch.zeros(
+                        (len(batch), int(cfg["bridge"]["bottleneck_dim"])),
+                        device=device,
+                        dtype=dtype,
+                    )
+                    source_ids = [None] * len(batch)
+                encoded = encode_prompt_batch(
+                    tokenizer, "split_b", batch, max_length, device
+                )
+                injector = HiddenStateInjector(
+                    receiver_layer,
+                    lambda hidden, message=z: bridge.inject(hidden, message),
+                )
+                try:
+                    with torch.inference_mode():
+                        generated = model_b.generate(
+                            **encoded,
+                            max_new_tokens=max_new_tokens,
+                            do_sample=False,
+                            pad_token_id=tokenizer.pad_token_id,
+                            eos_token_id=tokenizer.eos_token_id,
+                        )
+                finally:
+                    injector.remove()
+                texts = tokenizer.batch_decode(
+                    generated[:, encoded["input_ids"].shape[1]:],
+                    skip_special_tokens=True,
+                )
+                for row, text, source_id in zip(batch, texts, source_ids):
+                    prediction = _prediction(
+                        row, intervention, text, extract_option
+                    )
+                    prediction["message_source_sample_id"] = source_id
+                    predictions.append(prediction)
+                print(
+                    f"{intervention}: "
+                    f"{min(start + batch_size, len(rows))}/{len(rows)}",
+                    end="\r",
+                )
+            print(
+                f"{intervention}: accuracy="
+                f"{sum(int(row['correct']) for row in predictions) / len(predictions):.4f}"
+            )
+            write_jsonl(generation_dir / f"{intervention}.jsonl", predictions)
+            all_predictions[intervention] = predictions
+        del model_b, bridge
+        gc.collect()
+        torch.cuda.empty_cache()
 
     summaries = {
         mode: summarize_predictions(predictions)
@@ -301,38 +363,42 @@ def main() -> None:
     }
     resamples = int(eval_cfg["bootstrap_resamples"])
     seed = int(cfg["seed"])
+    comparison_specs = (
+        ("split_matched_vs_single_full", "split_matched", "single_full", seed),
+        ("split_matched_vs_base_full", "split_matched", "base_full", seed + 1),
+        ("split_matched_vs_shuffled", "split_matched", "split_shuffled", seed + 2),
+        ("split_matched_vs_zero", "split_matched", "split_zero", seed + 3),
+    )
     comparisons = {
-        "split_matched_vs_single_full": paired_stratified_bootstrap(
-            all_predictions["split_matched"], all_predictions["single_full"],
-            resamples, seed,
-        ),
-        "split_matched_vs_base_full": paired_stratified_bootstrap(
-            all_predictions["split_matched"], all_predictions["base_full"],
-            resamples, seed + 1,
-        ),
-        "split_matched_vs_shuffled": paired_stratified_bootstrap(
-            all_predictions["split_matched"], all_predictions["split_shuffled"],
-            resamples, seed + 2,
-        ),
-        "split_matched_vs_zero": paired_stratified_bootstrap(
-            all_predictions["split_matched"], all_predictions["split_zero"],
-            resamples, seed + 3,
-        ),
+        name: paired_stratified_bootstrap(
+            all_predictions[left], all_predictions[right], resamples, pair_seed
+        )
+        for name, left, right, pair_seed in comparison_specs
+        if left in all_predictions and right in all_predictions
     }
-    primary = comparisons["split_matched_vs_single_full"]
-    low, high = primary["bootstrap_95_ci"]
-    if low > 0:
-        primary_verdict = "SPLIT_BETTER"
-    elif high < 0:
-        primary_verdict = "SINGLE_FULL_BETTER"
+    primary = comparisons.get("split_matched_vs_single_full")
+    if primary is None:
+        primary_verdict = "NOT_EVALUATED"
+        low = high = None
     else:
-        primary_verdict = "INCONCLUSIVE"
+        low, high = primary["bootstrap_95_ci"]
+        if low > 0:
+            primary_verdict = "SPLIT_BETTER"
+        elif high < 0:
+            primary_verdict = "SINGLE_FULL_BETTER"
+        else:
+            primary_verdict = "INCONCLUSIVE"
     metrics = {
         "experiment_name": (
             external_cfg["experiment_name"] if external_cfg else cfg["experiment_name"]
         ),
         "training_experiment_name": cfg["experiment_name"],
-        "evaluation_track": "official_external" if external_cfg else "controlled_synthetic",
+        "evaluation_track": (
+            "official_external"
+            if external_cfg
+            else f"controlled_synthetic_{args.test_split}"
+        ),
+        "selected_modes": list(args.modes),
         "official_eval_only": bool(external_cfg),
         "model_name": cfg["model_name"],
         "num_examples": len(rows),
@@ -350,7 +416,13 @@ def main() -> None:
         metrics["official_provenance_manifest"] = external_manifest
     write_json(metrics_path, metrics)
     print(f"Saved metrics: {project_path(metrics_path)}")
-    print(f"primary_verdict={primary_verdict} delta={primary['delta']:+.4f} CI={[low, high]}")
+    if primary is None:
+        print(f"primary_verdict={primary_verdict}")
+    else:
+        print(
+            f"primary_verdict={primary_verdict} "
+            f"delta={primary['delta']:+.4f} CI={[low, high]}"
+        )
 
 
 if __name__ == "__main__":

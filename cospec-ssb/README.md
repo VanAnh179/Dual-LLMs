@@ -107,3 +107,37 @@ The official sources are:
   <https://huggingface.co/datasets/WildEval/ZebraLogic>
 - BIG-Bench Hard: <https://github.com/suzgunmirac/BIG-Bench-Hard>
 - PRM800K: <https://github.com/openai/prm800k>
+
+## V03 OOD learning curve
+
+V03 keeps V02 reproducible and adds a larger controlled track with explicit
+generalization pressure:
+
+- 32,768 training examples and 4,096 development examples.
+- 4,096 IID test examples using the development template partition.
+- 4,096 OOD test examples using held-out render templates and deeper
+  constructions.
+- Nested, family-balanced learning-curve points at 2k, 4k, 8k, 16k, and 32k.
+- Matched optimizer-step and effective-batch budgets for `single_full` and
+  `split_latent`.
+- Full partial-view, shuffled-message, and zero-message controls at the final
+  point, followed by the official external evaluation.
+
+Generate and validate the controlled data:
+
+```bash
+python scripts/V03_generate_benchmark.py --overwrite
+python scripts/V03_validate_benchmark.py
+```
+
+The Kaggle upload artifacts are generated into `data/`:
+
+```bash
+python scripts/V03_package_kaggle_bundle.py
+python scripts/V03_create_kaggle_notebook.py
+```
+
+Use `V03_Kaggle_T4x2_learning_curve.ipynb` with Internet enabled and the Kaggle
+T4 x2 accelerator. The notebook runs a GPU smoke gate before starting the full
+curve and records finite-loss and convergence diagnostics; convergence is an
+observed result, not assumed in advance.

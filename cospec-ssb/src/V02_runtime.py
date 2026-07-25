@@ -28,7 +28,11 @@ def require_v02_preflight(config_path: str) -> tuple[dict[str, Any], dict[str, A
     if manifest.get("smoke"):
         raise SystemExit("V02 preflight blocked: manifest is marked as smoke.")
     failures = []
-    for split in ("train", "dev", "test"):
+    configured_splits = [
+        split for split in cfg["data"]
+        if split in dataset_cfg["output_paths"]
+    ]
+    for split in configured_splits:
         path = project_path(cfg["data"][split])
         if not path.exists():
             failures.append(f"missing {split} data: {path}")
@@ -86,38 +90,63 @@ def require_official_external_preflight(
     return cfg, manifest
 
 
-def require_training_artifacts(cfg: dict[str, Any], require_full: bool) -> dict[str, Any]:
+def require_training_artifacts(
+    cfg: dict[str, Any],
+    require_full: bool,
+    modes: set[str] | None = None,
+) -> dict[str, Any]:
     manifest = read_json(cfg["outputs"]["training_manifest"], default={})
     single = manifest.get("single_baselines", {})
     split = manifest.get("split_latent", {})
     failures = []
-    for mode in ("full", "view_a", "view_b"):
+    requested = modes or {
+        "single_full", "single_a", "single_b",
+        "split_matched", "split_shuffled", "split_zero",
+    }
+    single_modes = {
+        "full": "single_full",
+        "view_a": "single_a",
+        "view_b": "single_b",
+    }
+    required_single = [
+        mode for mode, evaluation_mode in single_modes.items()
+        if evaluation_mode in requested
+    ]
+    for mode in required_single:
         item = single.get(mode)
         if not item:
             failures.append(f"missing training manifest for single {mode}")
             continue
         if not project_path(item["adapter_path"]).exists():
             failures.append(f"missing single {mode} adapter")
-    for key in ("receiver_adapter_path", "bridge_path"):
-        if not split.get(key) or not project_path(split[key]).exists():
-            failures.append(f"missing split artifact: {key}")
+    needs_split = bool(
+        requested & {"split_matched", "split_shuffled", "split_zero"}
+    )
+    if needs_split:
+        for key in ("receiver_adapter_path", "bridge_path"):
+            if not split.get(key) or not project_path(split[key]).exists():
+                failures.append(f"missing split artifact: {key}")
     if require_full and not failures:
         expected = len(read_jsonl(cfg["data"]["train"]))
-        records = [single[mode] for mode in ("full", "view_a", "view_b")] + [split]
-        if any(int(record["num_train_examples"]) != expected for record in records):
+        records = [single[mode] for mode in required_single]
+        if needs_split:
+            records.append(split)
+        if records and any(
+            int(record["num_train_examples"]) != expected for record in records
+        ):
             failures.append(f"not every model used all {expected} training rows")
         row_hashes = {record.get("sample_ids_sha256") for record in records}
-        if len(row_hashes) != 1:
+        if records and len(row_hashes) != 1:
             failures.append("training row-order hashes differ across conditions")
         optimizer_steps = {int(record["optimizer_steps"]) for record in records}
-        if len(optimizer_steps) != 1:
+        if records and len(optimizer_steps) != 1:
             failures.append(
                 f"optimizer-step budgets differ across conditions: {sorted(optimizer_steps)}"
             )
         effective_batches = {
             int(record["effective_batch_size"]) for record in records
         }
-        if len(effective_batches) != 1:
+        if records and len(effective_batches) != 1:
             failures.append(
                 f"effective batch sizes differ across conditions: {sorted(effective_batches)}"
             )
