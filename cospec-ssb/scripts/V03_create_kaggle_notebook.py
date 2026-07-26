@@ -198,6 +198,7 @@ else:
     hf_constants.HF_HUB_OFFLINE = False
     from huggingface_hub import snapshot_download
     model_cache = snapshot_download("Qwen/Qwen2.5-1.5B-Instruct")
+    os.environ["COSPEC_MODEL_PATH"] = model_cache
     print("Model snapshot ready before parallel workers:", model_cache)
 else:
     print("Model prefetch: skipped during local notebook validation")"""

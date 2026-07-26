@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import gc
 import hashlib
 import os
@@ -170,6 +171,8 @@ def main() -> None:
     if dtype_name not in dtype_map:
         raise SystemExit(f"Unsupported evaluation dtype: {dtype_name}")
     dtype = dtype_map[dtype_name]
+    torch.set_num_threads(min(4, max(1, os.cpu_count() or 1)))
+    torch.set_num_interop_threads(1)
     batch_size = int(args.batch_size or eval_cfg["batch_size"])
     max_length = int(
         (external_cfg or {}).get(
@@ -184,23 +187,26 @@ def main() -> None:
     generation_dir = project_path(generation_path)
     generation_dir.mkdir(parents=True, exist_ok=True)
     all_predictions: dict[str, list[dict]] = {}
+    model_source = os.environ.get("COSPEC_MODEL_PATH", cfg["model_name"])
 
     def load_base_model(label: str):
         free_bytes, total_bytes = torch.cuda.mem_get_info()
         print(
-            f"Loading {label} directly on {device}: "
+            f"Loading {label} from {model_source}: "
             f"free_gpu={free_bytes / 2**30:.2f}/{total_bytes / 2**30:.2f} GiB",
             flush=True,
         )
-        model = AutoModelForCausalLM.from_pretrained(
-            cfg["model_name"],
-            dtype=dtype,
-            trust_remote_code=True,
-            device_map={"": device},
-            low_cpu_mem_usage=True,
-            local_files_only=os.environ.get("HF_HUB_OFFLINE", "0").upper()
-            in {"1", "ON", "TRUE", "YES"},
-        )
+        faulthandler.dump_traceback_later(120, repeat=True)
+        try:
+            model = AutoModelForCausalLM.from_pretrained(
+                model_source,
+                dtype=dtype,
+                trust_remote_code=True,
+                use_safetensors=True,
+                local_files_only=True,
+            ).to(device)
+        finally:
+            faulthandler.cancel_dump_traceback_later()
         print(f"Loaded {label} on GPU", flush=True)
         return model
 
