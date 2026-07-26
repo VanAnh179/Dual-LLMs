@@ -180,6 +180,10 @@ else:
     ),
     code(
         """if RUN_GPU:
+    os.environ.pop("HF_HUB_OFFLINE", None)
+    os.environ.pop("TRANSFORMERS_OFFLINE", None)
+    import huggingface_hub.constants as hf_constants
+    hf_constants.HF_HUB_OFFLINE = False
     from huggingface_hub import snapshot_download
     model_cache = snapshot_download("Qwen/Qwen2.5-1.5B-Instruct")
     print("Model snapshot ready before parallel workers:", model_cache)
