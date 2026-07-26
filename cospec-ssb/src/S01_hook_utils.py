@@ -14,11 +14,28 @@ def get_layer_by_index(model: nn.Module, layer_idx: int) -> nn.Module:
     Works with both bare ``AutoModelForCausalLM`` and ``PeftModel`` wrappers.
     Validates that *layer_idx* is within ``[0, num_hidden_layers)``.
     """
-    # Unwrap PeftModel if needed
-    base = model.base_model.model if hasattr(model, "base_model") else model
-    # Qwen2.5 layout: model.model.layers[i]
-    inner = base.model if hasattr(base, "model") else base
-    num_layers: int = inner.config.num_hidden_layers
+    pending = [model]
+    visited: set[int] = set()
+    inner: nn.Module | None = None
+    while pending:
+        candidate = pending.pop(0)
+        if id(candidate) in visited:
+            continue
+        visited.add(id(candidate))
+        layers = getattr(candidate, "layers", None)
+        config = getattr(candidate, "config", None)
+        if isinstance(layers, nn.ModuleList) and hasattr(config, "num_hidden_layers"):
+            inner = candidate
+            break
+        for attribute in ("model", "base_model"):
+            child = getattr(candidate, attribute, None)
+            if isinstance(child, nn.Module) and id(child) not in visited:
+                pending.append(child)
+    if inner is None:
+        raise TypeError(
+            f"Could not locate decoder layers inside {type(model).__name__}."
+        )
+    num_layers = len(inner.layers)
     if not (0 <= layer_idx < num_layers):
         raise ValueError(
             f"layer_idx={layer_idx} out of range [0, {num_layers}). "
