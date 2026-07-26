@@ -150,7 +150,19 @@ missing = [
 ]
 if missing and IS_KAGGLE:
     run_cmd([sys.executable, "-m", "pip", "install", "-q", *missing], cwd=REPO_ROOT)
-print({"missing_before": missing, "installed_on_kaggle": missing if IS_KAGGLE else []})"""
+torchao_present = importlib.util.find_spec("torchao") is not None
+if torchao_present and IS_KAGGLE:
+    run_cmd(
+        [sys.executable, "-m", "pip", "uninstall", "-y", "torchao"],
+        cwd=REPO_ROOT,
+    )
+    importlib.invalidate_caches()
+assert not IS_KAGGLE or importlib.util.find_spec("torchao") is None
+print({
+    "missing_before": missing,
+    "installed_on_kaggle": missing if IS_KAGGLE else [],
+    "removed_optional_torchao": bool(torchao_present and IS_KAGGLE),
+})"""
     ),
     code(
         """run_cmd(
