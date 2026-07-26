@@ -130,14 +130,19 @@ python scripts/V03_generate_benchmark.py --overwrite
 python scripts/V03_validate_benchmark.py
 ```
 
-The Kaggle upload artifacts are generated into `data/`:
+Run a one-GPU smoke test before starting the full curve:
 
 ```bash
-python scripts/V03_package_kaggle_bundle.py
-python scripts/V03_create_kaggle_notebook.py
+CUDA_VISIBLE_DEVICES=0 python scripts/V03_run_learning_curve.py \
+  --config configs/v03_learning_curve.yaml --smoke
 ```
 
-Use `V03_Kaggle_T4x2_learning_curve.ipynb` with Internet enabled and the Kaggle
-T4 x2 accelerator. The notebook runs a GPU smoke gate before starting the full
-curve and records finite-loss and convergence diagnostics; convergence is an
-observed result, not assumed in advance.
+After the smoke gate passes, run the resumable full curve on GPU0:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/V03_run_learning_curve.py \
+  --config configs/v03_learning_curve.yaml --resume
+```
+
+The runner uses sequential workers with one visible GPU and parallel workers
+when two healthy GPUs are visible.

@@ -223,16 +223,18 @@ CUDA_VISIBLE_DEVICES=0 python scripts/V02_evaluate_split_vs_single.py \
   --external-config configs/v02_official_external.yaml
 ```
 
-## Kaggle T4 x2
+## V03 OOD learning curve on GPU0
 
-Create the deterministic upload bundle:
+Run the smoke gate:
 
 ```bash
-python scripts/V02_package_kaggle_bundle.py
+CUDA_VISIBLE_DEVICES=0 python scripts/V03_run_learning_curve.py \
+  --config configs/v03_learning_curve.yaml --smoke
 ```
 
-Upload `data/V02_kaggle_training_bundle.zip` as a Kaggle Dataset, open
-`notebooks/V02_Kaggle_T4x2_full_train.ipynb`, select **GPU T4 x2**, enable
-Internet, and run all cells. The notebook verifies every bundled file, runs an
-isolated GPU smoke train/eval, requires finite and improving full-run loss
-windows, then runs controlled and official external evaluations.
+Then run or resume the complete nested curve and final controls:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/V03_run_learning_curve.py \
+  --config configs/v03_learning_curve.yaml --resume
+```

@@ -283,8 +283,16 @@ def main() -> None:
         import torch
     except ImportError as exc:
         raise SystemExit("PyTorch is required.") from exc
-    if not torch.cuda.is_available() or torch.cuda.device_count() < 2:
-        raise SystemExit("V03 learning curves require two visible CUDA GPUs.")
+    if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
+        raise SystemExit("V03 learning curves require at least one visible CUDA GPU.")
+    gpu_count = torch.cuda.device_count()
+    split_gpu = 1 if gpu_count >= 2 else 0
+    sequential_training = args.smoke or gpu_count == 1
+    print(
+        f"CUDA workers: visible={gpu_count}, mode="
+        f"{'sequential' if sequential_training else 'parallel'}",
+        flush=True,
+    )
 
     configured_sizes = [int(value) for value in cfg["learning_curve"]["train_sizes"]]
     sizes = args.train_sizes or configured_sizes
@@ -364,12 +372,12 @@ def main() -> None:
                 str(size),
             ]
             single_process = _run(single_command, gpu=0)
-            if args.smoke:
-                _wait_one(single_process, f"smoke single training n={size}")
-                split_process = _run(split_command, gpu=1)
-                _wait_one(split_process, f"smoke split training n={size}")
+            if sequential_training:
+                _wait_one(single_process, f"single training n={size}")
+                split_process = _run(split_command, gpu=split_gpu)
+                _wait_one(split_process, f"split training n={size}")
             else:
-                split_process = _run(split_command, gpu=1)
+                split_process = _run(split_command, gpu=split_gpu)
                 _wait_pair(single_process, split_process, f"training n={size}")
             merged = _merge_manifests(
                 [
@@ -424,33 +432,34 @@ def main() -> None:
         if partials_ready:
             print("Resume: final partial-view controls already complete", flush=True)
         else:
-            partial_a = _run(
-                [
-                    sys.executable,
-                    "scripts/V02_train_single_baselines.py",
-                    "--config",
-                    _relative(partial_a_path),
-                    "--modes",
-                    "view_a",
-                    "--max-examples",
-                    str(sizes[-1]),
-                ],
-                gpu=0,
-            )
-            partial_b = _run(
-                [
-                    sys.executable,
-                    "scripts/V02_train_single_baselines.py",
-                    "--config",
-                    _relative(partial_b_path),
-                    "--modes",
-                    "view_b",
-                    "--max-examples",
-                    str(sizes[-1]),
-                ],
-                gpu=1,
-            )
-            _wait_pair(partial_a, partial_b, "final partial-view controls")
+            partial_a_command = [
+                sys.executable,
+                "scripts/V02_train_single_baselines.py",
+                "--config",
+                _relative(partial_a_path),
+                "--modes",
+                "view_a",
+                "--max-examples",
+                str(sizes[-1]),
+            ]
+            partial_b_command = [
+                sys.executable,
+                "scripts/V02_train_single_baselines.py",
+                "--config",
+                _relative(partial_b_path),
+                "--modes",
+                "view_b",
+                "--max-examples",
+                str(sizes[-1]),
+            ]
+            partial_a = _run(partial_a_command, gpu=0)
+            if gpu_count == 1:
+                _wait_one(partial_a, "final view-a control")
+                partial_b = _run(partial_b_command, gpu=0)
+                _wait_one(partial_b, "final view-b control")
+            else:
+                partial_b = _run(partial_b_command, gpu=1)
+                _wait_pair(partial_a, partial_b, "final partial-view controls")
             _merge_manifests(
                 [
                     project_path(final_root / "metrics/single_training_manifest.json"),
@@ -483,8 +492,10 @@ def main() -> None:
         "intermediate_eval_examples": intermediate_eval,
         "final_full_controls": not args.smoke,
         "gpu_parallelism": {
-            "gpu_0": "single_full",
-            "gpu_1": "split_latent",
+            "visible_gpu_count": gpu_count,
+            "mode": "sequential" if gpu_count == 1 else "parallel",
+            "single_gpu": 0,
+            "split_gpu": split_gpu,
         },
         "records": records,
         "final_eval_config": (
