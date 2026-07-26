@@ -183,8 +183,7 @@ def _evaluate(
     if max_examples is not None:
         command.extend(["--max-examples", str(max_examples)])
     process = _run(command, gpu=0)
-    if process.wait():
-        raise SystemExit(f"Evaluation failed for {config_path} ({test_split})")
+    _wait_one(process, f"evaluation {test_split} for {config_path.parent.parent.name}")
 
 
 def _curve_record(size: int, cfg: dict, metrics: dict) -> dict:

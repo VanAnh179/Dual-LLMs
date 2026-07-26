@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import gc
 import hashlib
+import os
 import random
 import sys
 from collections import defaultdict
@@ -184,10 +185,27 @@ def main() -> None:
     generation_dir.mkdir(parents=True, exist_ok=True)
     all_predictions: dict[str, list[dict]] = {}
 
-    def evaluate_single(mode_name: str, prompt_mode: str, adapter_path: Path | None):
+    def load_base_model(label: str):
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        print(
+            f"Loading {label} directly on {device}: "
+            f"free_gpu={free_bytes / 2**30:.2f}/{total_bytes / 2**30:.2f} GiB",
+            flush=True,
+        )
         model = AutoModelForCausalLM.from_pretrained(
-            cfg["model_name"], dtype=dtype, trust_remote_code=True
-        ).to(device)
+            cfg["model_name"],
+            dtype=dtype,
+            trust_remote_code=True,
+            device_map={"": device},
+            low_cpu_mem_usage=True,
+            local_files_only=os.environ.get("HF_HUB_OFFLINE", "0").upper()
+            in {"1", "ON", "TRUE", "YES"},
+        )
+        print(f"Loaded {label} on GPU", flush=True)
+        return model
+
+    def evaluate_single(mode_name: str, prompt_mode: str, adapter_path: Path | None):
+        model = load_base_model(mode_name)
         if adapter_path is not None:
             if not adapter_path.exists():
                 raise SystemExit(f"Missing adapter: {adapter_path}")
@@ -249,9 +267,7 @@ def main() -> None:
             device=device, dtype=dtype
         )
         bridge.eval()
-        model_a = AutoModelForCausalLM.from_pretrained(
-            cfg["model_name"], dtype=dtype, trust_remote_code=True
-        ).to(device)
+        model_a = load_base_model("split encoder")
         model_a.eval().requires_grad_(False)
         extractor = HiddenStateExtractor(
             get_layer_by_index(model_a, int(cfg["bridge"]["layer_index"]))
@@ -282,9 +298,7 @@ def main() -> None:
         gc.collect()
         torch.cuda.empty_cache()
 
-        model_b = AutoModelForCausalLM.from_pretrained(
-            cfg["model_name"], dtype=dtype, trust_remote_code=True
-        ).to(device)
+        model_b = load_base_model("split receiver")
         model_b = PeftModel.from_pretrained(model_b, receiver_path, is_trainable=False)
         model_b.eval()
         receiver_layer = get_layer_by_index(
